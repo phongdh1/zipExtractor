@@ -1,3 +1,5 @@
+// Declare gapi as a global constant to satisfy TypeScript compiler
+declare const gapi: any;
 
 import React, { useState, useCallback, useEffect } from 'react';
 import LandingPage from './components/LandingPage';
@@ -8,10 +10,17 @@ import ExtractionProgress from './components/ExtractionProgress';
 import GoogleAuthModal from './components/GoogleAuthModal';
 import { View } from './types';
 
+// CẤU HÌNH GOOGLE API (Thay thế bằng thông tin của bạn từ Google Cloud Console)
+const CLIENT_ID = '627461813768-hida2q96vd3cs5ghasmrc5u5hpnorf2e.apps.googleusercontent.com'; 
+const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly';
+const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
+
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>(View.LANDING);
   const [selectedArchive, setSelectedArchive] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => 
     window.matchMedia('(prefers-color-scheme: dark)').matches
   );
@@ -24,6 +33,19 @@ const App: React.FC = () => {
     }
   }, [darkMode]);
 
+  // Khởi tạo gapi
+  useEffect(() => {
+    const initGapi = () => {
+      // Fix: Use global gapi variable
+      gapi.load('client', async () => {
+        await gapi.client.init({
+          discoveryDocs: [DISCOVERY_DOC],
+        });
+      });
+    };
+    initGapi();
+  }, []);
+
   const toggleDarkMode = () => setDarkMode(!darkMode);
 
   const navigateTo = useCallback((view: View, archiveId?: string) => {
@@ -31,7 +53,10 @@ const App: React.FC = () => {
     setCurrentView(view);
   }, []);
 
-  const handleAuthSuccess = () => {
+  const handleAuthSuccess = (token: string) => {
+    setAccessToken(token);
+    // Fix: Use global gapi variable to set token
+    gapi.client.setToken({ access_token: token });
     setShowAuthModal(false);
     navigateTo(View.PICKER);
   };
@@ -46,12 +71,13 @@ const App: React.FC = () => {
             onFileSelect={(id) => navigateTo(View.PREVIEW, id)} 
             darkMode={darkMode}
             onToggleTheme={toggleDarkMode}
+            accessToken={accessToken}
           />
         );
       case View.PREVIEW:
         return (
           <ArchivePreview 
-            archiveId={selectedArchive || 'project-backup-2023.zip'} 
+            archiveId={selectedArchive || ''} 
             onExtract={() => navigateTo(View.DESTINATION)}
             onBack={() => navigateTo(View.PICKER)}
             darkMode={darkMode}
@@ -83,7 +109,9 @@ const App: React.FC = () => {
       {showAuthModal && (
         <GoogleAuthModal 
           onSuccess={handleAuthSuccess} 
-          onClose={() => setShowAuthModal(false)} 
+          onClose={() => setShowAuthModal(false)}
+          clientId={CLIENT_ID}
+          scopes={SCOPES}
         />
       )}
     </div>
