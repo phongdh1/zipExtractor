@@ -1,0 +1,8 @@
+{
+  "name": "ZIP Extractor Pro",
+  "description": "A high-performance, client-side ZIP extraction tool that integrates directly with Google Drive for seamless file management without server-side storage.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
