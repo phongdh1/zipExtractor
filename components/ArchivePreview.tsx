@@ -1,9 +1,13 @@
+
 // Declare gapi as a global constant
 declare const gapi: any;
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ArchiveContent } from '../types';
-import JSZip from 'https://esm.sh/jszip';
+
+// Load LibArchive.js from ESM
+// Note: In a production environment, you would want to host the WASM files yourself.
+const LIBARCHIVE_URL = 'https://esm.sh/libarchive.js';
 
 interface ArchivePreviewProps {
   archiveId: string;
@@ -27,69 +31,65 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
       if (!accessToken || !archiveId) return;
       setIsLoading(true);
       setError(null);
+      
       try {
-        // 1. Lấy thông tin metadata của file ZIP
         const metadata = await gapi.client.drive.files.get({
           fileId: archiveId,
           fields: 'name, size, mimeType'
         });
-        
-        const fileMeta = metadata.result;
-        setFileName(fileMeta.name);
+        setFileName(metadata.result.name);
 
-        // Kiểm tra nếu là file Google Doc (không thể tải trực tiếp qua alt=media)
-        if (fileMeta.mimeType.includes('google-apps')) {
-          throw new Error('Google Docs/Sheets/Slides are not ZIP files. Please select a valid .zip file.');
-        }
-
-        // 2. Tải nội dung binary của file ZIP
         const response = await fetch(`https://www.googleapis.com/drive/v3/files/${archiveId}?alt=media`, {
-          headers: { 
-            'Authorization': `Bearer ${accessToken}`,
-          }
+          headers: { 'Authorization': `Bearer ${accessToken}` }
         });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error?.message || `Failed to download file (HTTP ${response.status})`);
-        }
+        if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+        const blob = await response.blob();
 
-        const buffer = await response.arrayBuffer();
+        // Dynamically import libarchive.js and setup worker
+        const { Archive } = await import(LIBARCHIVE_URL);
+        
+        // Setup worker from remote URL
+        // In this environment, we use a hosted worker or initialize it with the correct paths
+        Archive.init({
+            workerUrl: 'https://cdn.jsdelivr.net/npm/libarchive.js/dist/worker-bundle.js'
+        });
 
-        // 3. Đọc file ZIP bằng JSZip
-        const zip = await JSZip.loadAsync(buffer);
+        const archive = await Archive.open(blob);
+        const obj = await archive.getFilesObject();
+        
         const archiveItems: ArchiveContent[] = [];
         
-        zip.forEach((relativePath, file) => {
-          const parts = relativePath.split('/');
-          const isDir = file.dir;
-          const name = isDir ? (parts[parts.length - 2] || parts[0]) + '/' : parts[parts.length - 1];
-          
-          // Lấy size uncompressed
-          const uncompressedSize = (file as any)._data?.uncompressedSize || 0;
-          const sizeStr = isDir ? '--' : 
-            uncompressedSize > 1024 * 1024 
-              ? (uncompressedSize / (1024 * 1024)).toFixed(1) + ' MB' 
-              : (uncompressedSize / 1024).toFixed(1) + ' KB';
+        const processNode = (node: any, path: string = '') => {
+            Object.keys(node).forEach(key => {
+                const item = node[key];
+                const currentPath = path ? `${path}/${key}` : key;
+                
+                const isDir = item._isDir === true;
+                
+                archiveItems.push({
+                    id: currentPath,
+                    name: key,
+                    size: isDir ? '--' : (item.size > 1024 * 1024 ? (item.size / (1024 * 1024)).toFixed(1) + ' MB' : (item.size / 1024).toFixed(1) + ' KB'),
+                    dateModified: new Date().toLocaleDateString(), // Libarchive might not always expose dates easily per format
+                    type: isDir ? 'folder' : (key.match(/\.(jpg|jpeg|png|gif)$/i) ? 'image' : key.endsWith('.pdf') ? 'pdf' : 'doc')
+                });
 
-          archiveItems.push({
-            id: relativePath,
-            name: name,
-            size: sizeStr,
-            dateModified: new Date(file.date).toLocaleDateString(),
-            type: isDir ? 'folder' : (name.match(/\.(jpg|jpeg|png|gif)$/i) ? 'image' : name.endsWith('.pdf') ? 'pdf' : 'doc')
-          });
-        });
+                if (isDir && item.entries) {
+                    processNode(item.entries, currentPath);
+                }
+            });
+        };
 
-        if (archiveItems.length === 0) {
-          throw new Error('This ZIP file appears to be empty.');
-        }
+        processNode(obj);
+
+        if (archiveItems.length === 0) throw new Error('Archive is empty or unsupported format.');
 
         setItems(archiveItems);
         setSelectedItems(new Set(archiveItems.map(i => i.id)));
       } catch (err: any) {
-        console.error('Error reading archive:', err);
-        setError(err.message || 'Could not read ZIP file. Make sure it is a valid archive.');
+        console.error('Archive Error:', err);
+        setError(err.message || 'Could not read archive. Please ensure it is a valid .zip, .rar, or .7z file.');
       } finally {
         setIsLoading(false);
       }
@@ -141,7 +141,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-4">
                 <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-gray-500 font-bold animate-pulse">Downloading and reading archive...</p>
+                <p className="text-gray-500 font-bold animate-pulse">Analyzing multi-format archive (WASM)...</p>
               </div>
             ) : error ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6 text-center">
@@ -149,9 +149,9 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                   <span className="material-symbols-outlined text-5xl">warning</span>
                 </div>
                 <div className="max-w-md">
-                  <h3 className="text-xl font-bold mb-2">Failed to load archive</h3>
+                  <h3 className="text-xl font-bold mb-2">Unsupported Format</h3>
                   <p className="text-gray-500 mb-6">{error}</p>
-                  <button onClick={onBack} className="px-6 py-2 bg-primary text-white rounded-lg font-bold">Choose another file</button>
+                  <button onClick={onBack} className="px-6 py-2 bg-primary text-white rounded-lg font-bold">Try another file</button>
                 </div>
               </div>
             ) : (
@@ -168,7 +168,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                   <div className="flex flex-col gap-1">
                     <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{fileName}</h1>
                     <div className="flex items-center gap-3 text-gray-500 text-[10px] font-bold uppercase tracking-wider">
-                      <span>{items.length} Entries found</span>
+                      <span>{items.length} Files found</span>
                     </div>
                   </div>
                 </div>
@@ -178,7 +178,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 material-symbols-outlined !text-lg">search</span>
                     <input 
                       className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border-none rounded-lg text-sm" 
-                      placeholder="Filter content..." 
+                      placeholder="Filter files..." 
                       value={filterQuery}
                       onChange={(e) => setFilterQuery(e.target.value)}
                     />
@@ -237,7 +237,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
           <div className="absolute bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-surface-dark/80 backdrop-blur-md p-4 shadow-xl z-30">
             <div className="max-w-6xl mx-auto flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <p className="text-sm font-black">{selectedItems.size} files ready to unzip</p>
+                <p className="text-sm font-black">{selectedItems.size} files ready to extract</p>
               </div>
               <button 
                 disabled={selectedItems.size === 0}

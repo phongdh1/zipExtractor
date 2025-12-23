@@ -7,13 +7,17 @@ export enum View {
   EXTRACTING = 'EXTRACTING'
 }
 
+export type FileCategory = 'ZIP' | 'RAR' | '7Z' | 'FOLDER' | 'PDF' | 'IMAGE' | 'DOC' | 'SHEET' | 'SLIDE' | 'FILE';
+
 export interface DriveFile {
   id: string;
   name: string;
   size: string;
-  type: 'ZIP' | 'RAR' | '7Z' | 'FOLDER' | 'FILE';
+  type: FileCategory;
+  mimeType: string;
   lastModified: string;
   color?: string;
+  icon?: string;
 }
 
 export interface ArchiveContent {
@@ -21,7 +25,7 @@ export interface ArchiveContent {
   name: string;
   size: string;
   dateModified: string;
-  type: 'folder' | 'image' | 'doc' | 'pdf' | 'text';
+  type: 'folder' | 'image' | 'doc' | 'pdf' | 'text' | 'archive';
   parentId?: string;
   isOpen?: boolean;
 }

@@ -1,8 +1,9 @@
+
 // Declare gapi as a global constant to satisfy TypeScript compiler
 declare const gapi: any;
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { DriveFile } from '../types';
+import { DriveFile, FileCategory } from '../types';
 
 interface DrivePickerProps {
   onFileSelect: (id: string) => void;
@@ -16,26 +17,38 @@ interface FolderPath {
   name: string;
 }
 
+const getFileInfo = (mimeType: string, fileName: string): { type: FileCategory; icon: string; color: string } => {
+  if (mimeType === 'application/vnd.google-apps.folder') return { type: 'FOLDER', icon: 'folder', color: 'text-amber-500' };
+  if (mimeType === 'application/pdf') return { type: 'PDF', icon: 'picture_as_pdf', color: 'text-red-500' };
+  
+  if (mimeType.includes('image/')) return { type: 'IMAGE', icon: 'image', color: 'text-purple-500' };
+  
+  if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return { type: 'SHEET', icon: 'table_view', color: 'text-green-600' };
+  if (mimeType.includes('document') || mimeType.includes('word')) return { type: 'DOC', icon: 'description', color: 'text-blue-600' };
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return { type: 'SLIDE', icon: 'slideshow', color: 'text-orange-500' };
+  
+  if (mimeType.includes('zip') || fileName.endsWith('.zip')) return { type: 'ZIP', icon: 'folder_zip', color: 'text-blue-500' };
+  if (mimeType.includes('rar') || fileName.endsWith('.rar')) return { type: 'RAR', icon: 'inventory_2', color: 'text-purple-600' };
+  if (mimeType.includes('7z') || fileName.endsWith('.7z')) return { type: '7Z', icon: 'archive', color: 'text-indigo-500' };
+  
+  return { type: 'FILE', icon: 'draft', color: 'text-gray-400' };
+};
+
 const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onToggleTheme, accessToken }) => {
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Trạng thái điều hướng
   const [currentFolderId, setCurrentFolderId] = useState<string>('root');
   const [pathHistory, setPathHistory] = useState<FolderPath[]>([{ id: 'root', name: 'My Drive' }]);
 
-  // Lấy danh sách file dựa trên thư mục hiện tại
   useEffect(() => {
     const listFiles = async () => {
       if (!accessToken) return;
       setIsLoading(true);
       try {
-        // Query: Lấy file trong thư mục hiện tại VÀ (là folder HOẶC là file nén)
-        // Nếu có searchQuery thì bỏ qua filter parent để tìm toàn bộ
         const q = searchQuery 
-          ? `name contains '${searchQuery}' and (mimeType = 'application/vnd.google-apps.folder' or mimeType contains 'zip' or mimeType contains 'compressed' or mimeType contains 'rar')`
+          ? `name contains '${searchQuery}' and trashed = false`
           : `'${currentFolderId}' in parents and trashed = false`;
 
         const response = await gapi.client.drive.files.list({
@@ -46,14 +59,16 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
         });
 
         const driveFiles: DriveFile[] = response.result.files.map((file: any) => {
-          const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+          const info = getFileInfo(file.mimeType, file.name);
           return {
             id: file.id,
             name: file.name,
             size: file.size ? `${(parseInt(file.size) / (1024 * 1024)).toFixed(1)} MB` : '--',
-            type: isFolder ? 'FOLDER' : 'ZIP',
+            type: info.type,
+            mimeType: file.mimeType,
             lastModified: new Date(file.modifiedTime).toLocaleDateString(),
-            color: isFolder ? 'text-amber-500' : 'text-blue-500'
+            color: info.color,
+            icon: info.icon
           };
         });
 
@@ -71,7 +86,7 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
   const handleFolderClick = (folderId: string, folderName: string) => {
     setCurrentFolderId(folderId);
     setPathHistory(prev => [...prev, { id: folderId, name: folderName }]);
-    setSearchQuery(''); // Reset search khi vào folder mới
+    setSearchQuery('');
   };
 
   const navigateToPath = (index: number) => {
@@ -86,10 +101,14 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
       handleFolderClick(file.id, file.name);
       return;
     }
+    
+    // Chỉ cho phép chọn các định dạng nén để Extract
+    const archiveTypes: FileCategory[] = ['ZIP', 'RAR', '7Z'];
+    if (!archiveTypes.includes(file.type)) return;
+
     const newSelected = new Set(selectedIds);
     if (newSelected.has(file.id)) newSelected.delete(file.id);
     else {
-      // Ở bản Pro này chúng ta cho phép chọn 1 file để extract (hoặc có thể mở rộng nhiều file)
       newSelected.clear(); 
       newSelected.add(file.id);
     }
@@ -114,7 +133,6 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
         <aside className="w-64 bg-white dark:bg-surface-dark border-r border-gray-200 dark:border-gray-800 flex-col hidden md:flex shrink-0">
           <div className="p-4 flex flex-col gap-6">
             <nav className="flex flex-col gap-1">
@@ -126,35 +144,25 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
                 <span className="material-symbols-outlined filled">cloud</span>
                 My Drive
               </button>
-              <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-400 cursor-not-allowed">
-                <span className="material-symbols-outlined">group</span>
-                Shared with me
-              </button>
-              <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-400 cursor-not-allowed">
-                <span className="material-symbols-outlined">star</span>
-                Starred
-              </button>
             </nav>
           </div>
         </aside>
 
         <main className="flex-1 flex flex-col min-w-0 bg-background-light dark:bg-background-dark overflow-hidden relative">
-          {/* Main Header & Search */}
           <div className="px-6 pt-6 pb-2 flex flex-col gap-4 shrink-0">
             <div className="flex items-center justify-between">
-              <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Select Archive</h1>
+              <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Drive Explorer</h1>
               <div className="relative w-64">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-gray-400 !text-lg">search</span>
                 <input 
                   className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-surface-dark text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all" 
-                  placeholder="Search in Drive..." 
+                  placeholder="Search files..." 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
             </div>
 
-            {/* Breadcrumbs */}
             <nav className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
               {pathHistory.map((folder, idx) => (
                 <React.Fragment key={folder.id}>
@@ -170,12 +178,11 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
             </nav>
           </div>
 
-          {/* Files Table */}
           <div className="flex-1 overflow-auto px-6 pb-32 custom-scrollbar">
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-24 gap-4">
                 <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-gray-500 text-sm font-medium animate-pulse">Syncing with Google Drive...</p>
+                <p className="text-gray-500 text-sm font-medium animate-pulse">Syncing...</p>
               </div>
             ) : (
               <div className="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
@@ -196,21 +203,23 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
                         className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer group ${selectedIds.has(file.id) ? 'bg-primary/5' : ''}`}
                       >
                         <td className="py-3 px-4 text-center">
-                          {file.type === 'FOLDER' ? (
-                            <span className="material-symbols-outlined text-gray-300 group-hover:text-amber-400 transition-colors">folder</span>
-                          ) : (
+                          {['ZIP', 'RAR', '7Z'].includes(file.type) ? (
                             <input 
                               type="checkbox" 
                               checked={selectedIds.has(file.id)} 
                               readOnly
                               className="rounded text-primary focus:ring-primary/20 pointer-events-none" 
                             />
+                          ) : (
+                            <span className={`material-symbols-outlined !text-xl opacity-30 group-hover:opacity-100 ${file.color}`}>
+                              {file.icon}
+                            </span>
                           )}
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-3">
                             <span className={`material-symbols-outlined filled ${file.color}`}>
-                              {file.type === 'FOLDER' ? 'folder' : 'folder_zip'}
+                              {file.icon}
                             </span>
                             <span className="text-sm font-semibold truncate max-w-[400px] text-slate-700 dark:text-zinc-200">
                               {file.name}
@@ -221,29 +230,12 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
                         <td className="py-3 px-4 text-right pr-8 text-xs text-gray-400">{file.lastModified}</td>
                       </tr>
                     ))}
-                    {files.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="py-32 text-center">
-                          <div className="flex flex-col items-center gap-3 text-gray-400">
-                            <span className="material-symbols-outlined text-5xl">folder_off</span>
-                            <p className="text-sm font-medium">This folder is empty or contains no archives.</p>
-                            <button 
-                              onClick={() => navigateToPath(0)}
-                              className="text-primary text-xs font-bold hover:underline"
-                            >
-                              Go back to My Drive
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
                   </tbody>
                 </table>
               </div>
             )}
           </div>
 
-          {/* Action Bar */}
           <div className="absolute bottom-0 left-0 right-0 bg-white/80 dark:bg-surface-dark/80 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 p-4 px-6 flex items-center justify-between shadow-2xl z-30">
             <div className="flex items-center gap-4">
               {selectedIds.size > 0 ? (
@@ -251,21 +243,19 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, darkMode, onTog
                   <div className="flex items-center justify-center size-7 bg-primary rounded-full text-white text-[11px] font-black shadow-lg shadow-primary/20">
                     {selectedIds.size}
                   </div>
-                  <span className="text-sm font-bold text-slate-900 dark:text-white">Archive ready for extraction</span>
+                  <span className="text-sm font-bold text-slate-900 dark:text-white">Selected archive for extraction</span>
                 </div>
               ) : (
-                <span className="text-sm text-gray-400 italic">Select a ZIP file to proceed</span>
+                <span className="text-sm text-gray-400 italic">Select a ZIP, RAR or 7Z file to proceed</span>
               )}
             </div>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => onFileSelect(Array.from(selectedIds)[0])}
-                disabled={selectedIds.size === 0}
-                className="px-8 py-2.5 rounded-xl bg-primary text-white text-sm font-black flex items-center gap-3 hover:bg-blue-600 disabled:opacity-30 disabled:grayscale transition-all shadow-lg shadow-primary/20 active:scale-95"
-              >
-                Inspect Archive <span className="material-symbols-outlined !text-lg">dock_to_right</span>
-              </button>
-            </div>
+            <button 
+              onClick={() => onFileSelect(Array.from(selectedIds)[0])}
+              disabled={selectedIds.size === 0}
+              className="px-8 py-2.5 rounded-xl bg-primary text-white text-sm font-black flex items-center gap-3 hover:bg-blue-600 disabled:opacity-30 disabled:grayscale transition-all shadow-lg shadow-primary/20 active:scale-95"
+            >
+              Next <span className="material-symbols-outlined !text-lg">arrow_forward</span>
+            </button>
           </div>
         </main>
       </div>
