@@ -11,7 +11,7 @@ import GoogleAuthModal from './components/GoogleAuthModal';
 import { View } from './types';
 
 // CẤU HÌNH GOOGLE API (Thay thế bằng thông tin của bạn từ Google Cloud Console)
-const CLIENT_ID = '627461813768-hida2q96vd3cs5ghasmrc5u5hpnorf2e.apps.googleusercontent.com'; 
+const CLIENT_ID = '627461813768-32hbllfh1ij4t5f4hj31rvgfbtctab9h.apps.googleusercontent.com'; 
 const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly';
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 
