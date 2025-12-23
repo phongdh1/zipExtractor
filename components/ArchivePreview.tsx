@@ -1,13 +1,10 @@
 
-// Declare gapi and Archive as global constants
+// Declare fflate and gapi as global constants
+declare const fflate: any;
 declare const gapi: any;
-declare const Archive: any;
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ArchiveContent } from '../types';
-
-// Use a stable CDN for the worker bundle
-const WORKER_BUNDLE_URL = 'https://cdn.jsdelivr.net/npm/libarchive.js@1.3.0/dist/worker-bundle.js';
 
 interface ArchivePreviewProps {
   archiveId: string;
@@ -27,7 +24,6 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
   const [filterQuery, setFilterQuery] = useState('');
 
   useEffect(() => {
-    let workerUrl: string | null = null;
     let isMounted = true;
 
     const loadArchive = async () => {
@@ -38,7 +34,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
       try {
         const metadata = await gapi.client.drive.files.get({
           fileId: archiveId,
-          fields: 'name, size, mimeType'
+          fields: 'name'
         });
         if (isMounted) setFileName(metadata.result.name);
 
@@ -46,83 +42,49 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
           headers: { 'Authorization': `Bearer ${accessToken}` }
         });
 
-        if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-        const blob = await response.blob();
+        if (!response.ok) throw new Error(`Download failed`);
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8 = new Uint8Array(arrayBuffer);
 
-        if (typeof Archive === 'undefined') {
-          throw new Error('LibArchive engine could not be detected. Please check your internet connection.');
-        }
-
-        /**
-         * FIX: Instead of importScripts, we fetch the actual bundle code.
-         * This prevents the "Module scripts don't support importScripts()" error.
-         */
-        const workerResponse = await fetch(WORKER_BUNDLE_URL);
-        if (!workerResponse.ok) throw new Error('Failed to fetch compression engine bundle.');
-        const workerCode = await workerResponse.text();
+        // fflate.unzipSync là cách nhanh nhất để lấy danh sách file
+        // Đối với file cực lớn, fflate.unzip (async) sẽ tốt hơn
+        const unzipped = fflate.unzipSync(uint8);
         
-        const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
-        workerUrl = URL.createObjectURL(workerBlob);
+        const archiveItems: ArchiveContent[] = Object.keys(unzipped).map(path => {
+            const parts = path.split('/');
+            const name = parts.pop() || parts.pop() || 'Unnamed';
+            const isDir = path.endsWith('/');
+            const size = unzipped[path].length;
 
-        Archive.init({ workerUrl: workerUrl });
+            let fileType: any = isDir ? 'folder' : 'text';
+            const lowerKey = name.toLowerCase();
+            if (lowerKey.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) fileType = 'image';
+            else if (lowerKey.endsWith('.pdf')) fileType = 'pdf';
+            else if (lowerKey.match(/\.(doc|docx|txt|rtf|odt)$/)) fileType = 'doc';
 
-        const archiveInstance = await Archive.open(blob);
-        const obj = await archiveInstance.getFilesObject();
-        
-        const archiveItems: ArchiveContent[] = [];
-        
-        const processNode = (node: any, path: string = '') => {
-            Object.keys(node).forEach(key => {
-                const item = node[key];
-                if (key === '_isDir' || key === 'entries' || key === 'size') return;
-                
-                const currentPath = path ? `${path}/${key}` : key;
-                const isDir = item._isDir === true;
-                
-                let fileType: any = isDir ? 'folder' : 'text';
-                const lowerKey = key.toLowerCase();
-                if (lowerKey.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) fileType = 'image';
-                else if (lowerKey.endsWith('.pdf')) fileType = 'pdf';
-                else if (lowerKey.match(/\.(doc|docx|txt|rtf|odt)$/)) fileType = 'doc';
-                else if (lowerKey.match(/\.(zip|rar|7z|tar|gz|bz2)$/)) fileType = 'archive';
-
-                archiveItems.push({
-                    id: currentPath,
-                    name: key,
-                    size: isDir ? '--' : (item.size > 1024 * 1024 ? (item.size / (1024 * 1024)).toFixed(1) + ' MB' : (item.size / 1024).toFixed(1) + ' KB'),
-                    dateModified: new Date().toLocaleDateString(),
-                    type: fileType
-                });
-
-                if (isDir && item.entries) {
-                    processNode(item.entries, currentPath);
-                }
-            });
-        };
-
-        processNode(obj);
+            return {
+                id: path,
+                name: name,
+                size: isDir ? '--' : (size > 1024 * 1024 ? (size / (1024 * 1024)).toFixed(1) + ' MB' : (size / 1024).toFixed(1) + ' KB'),
+                dateModified: new Date().toLocaleDateString(),
+                type: fileType
+            };
+        });
 
         if (isMounted) {
-          if (archiveItems.length === 0) throw new Error('Archive is empty or uses an unsupported encoding.');
           setItems(archiveItems);
           setSelectedItems(new Set(archiveItems.map(i => i.id)));
         }
       } catch (err: any) {
-        console.error('Archive Error:', err);
-        if (isMounted) {
-          setError(err.message || 'Error parsing archive content. Ensure the file is not corrupted.');
-        }
+        console.error('fflate Error:', err);
+        if (isMounted) setError('Không thể đọc file ZIP. Đảm bảo file không bị hỏng và là định dạng ZIP.');
       } finally {
         if (isMounted) setIsLoading(false);
       }
     };
 
     loadArchive();
-
-    return () => {
-      isMounted = false;
-      if (workerUrl) URL.revokeObjectURL(workerUrl);
-    };
+    return () => { isMounted = false; };
   }, [archiveId, accessToken]);
 
   const filteredItems = useMemo(() => {
@@ -142,19 +104,18 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
       case 'image': return { icon: 'image', color: 'text-purple-500 bg-purple-50 dark:bg-purple-900/20' };
       case 'pdf': return { icon: 'picture_as_pdf', color: 'text-red-500 bg-red-50 dark:bg-red-900/20' };
       case 'doc': return { icon: 'description', color: 'text-blue-500 bg-blue-50 dark:bg-blue-900/20' };
-      case 'archive': return { icon: 'inventory_2', color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20' };
       default: return { icon: 'draft', color: 'text-slate-400 bg-slate-50 dark:bg-slate-800' };
     }
   };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background-light dark:bg-background-dark">
+    <div className="h-screen flex flex-col overflow-hidden bg-background-light dark:bg-background-dark font-sans">
       <header className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-surface-dark px-6 py-3 shrink-0 z-10 shadow-sm">
         <div className="flex items-center gap-4 cursor-pointer" onClick={onBack}>
           <div className="size-8 flex items-center justify-center bg-primary/10 rounded-lg text-primary">
             <span className="material-symbols-outlined text-lg filled">arrow_back</span>
           </div>
-          <h2 className="text-lg font-bold">Back to Explorer</h2>
+          <h2 className="text-lg font-bold">Quay lại Drive</h2>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={onToggleTheme} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500">
@@ -169,47 +130,29 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
           <div className="max-w-6xl mx-auto w-full p-6 pb-32">
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6">
-                <div className="relative">
-                  <div className="size-16 border-4 border-primary/20 rounded-full"></div>
-                  <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0"></div>
-                </div>
-                <div className="text-center">
-                  <p className="text-slate-900 dark:text-white font-black text-lg">WASM Engine Initializing...</p>
-                  <p className="text-gray-500 text-sm font-medium mt-1">Downloading core components for {fileName}</p>
-                </div>
+                <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-slate-900 dark:text-white font-black text-lg">Đang đọc dữ liệu ZIP...</p>
               </div>
             ) : error ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6 text-center">
-                <div className="size-20 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-full flex items-center justify-center shadow-xl shadow-red-500/10">
-                  <span className="material-symbols-outlined text-5xl">warning</span>
-                </div>
-                <div className="max-w-md">
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">Extraction Error</h3>
-                  <p className="text-gray-500 mb-8 leading-relaxed">{error}</p>
-                  <button onClick={onBack} className="px-8 py-3 bg-primary text-white rounded-xl font-black shadow-lg shadow-primary/30 hover:bg-blue-600 transition-all active:scale-95">Go Back</button>
-                </div>
+                <span className="material-symbols-outlined text-red-500 text-5xl">warning</span>
+                <p className="text-gray-500 max-w-md">{error}</p>
+                <button onClick={onBack} className="px-8 py-3 bg-primary text-white rounded-xl font-bold">Thử lại</button>
               </div>
             ) : (
               <>
-                <div className="flex flex-col gap-1 mb-8">
-                  <nav className="flex items-center gap-2 mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    <span className="flex items-center gap-1 hover:text-primary cursor-pointer transition-colors" onClick={onBack}>
-                      <span className="material-symbols-outlined !text-sm">cloud</span> Drive
-                    </span>
-                    <span className="opacity-30">/</span>
-                    <span className="text-slate-900 dark:text-white truncate max-w-[200px]">{fileName}</span>
-                  </nav>
-                  <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{fileName}</h1>
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{items.length} Elements detected inside</p>
+                <div className="mb-8">
+                  <h1 className="text-3xl font-black text-slate-900 dark:text-white">{fileName}</h1>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mt-1">{items.length} tệp tin</p>
                 </div>
 
                 <div className="bg-white dark:bg-surface-dark rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between sticky top-0 bg-white dark:bg-surface-dark z-10">
+                  <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                     <div className="relative flex-1 max-w-md">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 material-symbols-outlined !text-lg">search</span>
                       <input 
-                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary/20 transition-all" 
-                        placeholder="Search inside archive..." 
+                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-none rounded-xl text-sm outline-none" 
+                        placeholder="Tìm trong tệp nén..." 
                         value={filterQuery}
                         onChange={(e) => setFilterQuery(e.target.value)}
                       />
@@ -217,39 +160,39 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-gray-50/50 dark:bg-gray-800/30 border-b border-gray-100 dark:border-gray-800">
+                    <table className="w-full text-left">
+                      <thead className="bg-gray-50 dark:bg-gray-800/30 border-b border-gray-100 dark:border-gray-800">
                         <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                           <th className="w-14 px-4 py-4 text-center">
                              <input 
                                type="checkbox" 
-                               checked={selectedItems.size === items.length && items.length > 0} 
+                               checked={selectedItems.size === items.length} 
                                onChange={() => setSelectedItems(selectedItems.size === items.length ? new Set() : new Set(items.map(i => i.id)))} 
-                               className="rounded text-primary focus:ring-primary/20 transition-all" 
+                               className="rounded text-primary" 
                              />
                           </th>
-                          <th className="px-4 py-4">Name</th>
-                          <th className="px-4 py-4 w-32">Size</th>
-                          <th className="px-4 py-4 w-40">Modified</th>
+                          <th className="px-4 py-4">Tên tệp</th>
+                          <th className="px-4 py-4 w-32">Dung lượng</th>
+                          <th className="px-4 py-4 w-40">Ngày sửa</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                         {filteredItems.map(item => (
-                          <tr key={item.id} className={`group hover:bg-primary/5 transition-colors cursor-pointer ${selectedItems.has(item.id) ? 'bg-primary/5' : ''}`}>
+                          <tr key={item.id} className="hover:bg-primary/5 transition-colors cursor-pointer">
                             <td className="px-4 py-4 text-center">
                               <input 
                                 type="checkbox" 
                                 checked={selectedItems.has(item.id)} 
                                 onChange={() => toggleItem(item.id)}
-                                className="rounded text-primary focus:ring-primary/20 transition-all" 
+                                className="rounded text-primary" 
                               />
                             </td>
                             <td className="px-4 py-4" onClick={() => toggleItem(item.id)}>
-                              <div className="flex items-center gap-3 select-none">
-                                <div className={`size-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${getIcon(item.type).color}`}>
+                              <div className="flex items-center gap-3">
+                                <div className={`size-9 rounded-xl flex items-center justify-center shrink-0 ${getIcon(item.type).color}`}>
                                   <span className="material-symbols-outlined !text-xl">{getIcon(item.type).icon}</span>
                                 </div>
-                                <span className="text-sm font-bold text-slate-700 dark:text-zinc-200 truncate max-w-[400px]">{item.name}</span>
+                                <span className="text-sm font-bold truncate max-w-[400px]">{item.name}</span>
                               </div>
                             </td>
                             <td className="px-4 py-4 text-xs font-black text-gray-400 uppercase">{item.size}</td>
@@ -266,23 +209,23 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
         </div>
 
         {!error && !isLoading && (
-          <div className="absolute bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-surface-dark/90 backdrop-blur-xl p-5 shadow-[0_-10px_40px_rgba(0,0,0,0.1)] z-30">
+          <div className="absolute bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-surface-dark/90 backdrop-blur-xl p-5 z-30">
             <div className="max-w-6xl mx-auto flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="size-11 bg-primary rounded-2xl flex items-center justify-center text-white shadow-xl shadow-primary/30">
-                    <span className="font-black text-base">{selectedItems.size}</span>
+                <div className="size-11 bg-primary rounded-2xl flex items-center justify-center text-white font-black shadow-lg">
+                    {selectedItems.size}
                 </div>
-                <div className="flex flex-col">
-                  <p className="text-sm font-black text-slate-900 dark:text-white">Ready for Extraction</p>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Targeting Google Drive</p>
+                <div>
+                  <p className="text-sm font-black">Tệp đã chọn</p>
+                  <p className="text-[10px] font-bold uppercase text-gray-400">Sẵn sàng chuyển sang Google Drive</p>
                 </div>
               </div>
               <button 
                 disabled={selectedItems.size === 0}
                 onClick={() => onExtract(fileName)}
-                className="px-10 py-4 rounded-2xl bg-primary text-white text-sm font-black shadow-2xl shadow-primary/40 hover:bg-blue-600 transition-all active:scale-95 flex items-center gap-3"
+                className="px-10 py-4 rounded-2xl bg-primary text-white text-sm font-black shadow-xl shadow-primary/30 hover:bg-blue-600 disabled:opacity-40 transition-all active:scale-95"
               >
-                <span className="material-symbols-outlined !text-lg">unarchive</span> Extract All
+                Tiếp tục giải nén
               </button>
             </div>
           </div>
