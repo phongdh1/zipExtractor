@@ -28,6 +28,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
 
   useEffect(() => {
     let workerUrl: string | null = null;
+    let isMounted = true;
 
     const loadArchive = async () => {
       if (!accessToken || !archiveId) return;
@@ -39,7 +40,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
           fileId: archiveId,
           fields: 'name, size, mimeType'
         });
-        setFileName(metadata.result.name);
+        if (isMounted) setFileName(metadata.result.name);
 
         const response = await fetch(`https://www.googleapis.com/drive/v3/files/${archiveId}?alt=media`, {
           headers: { 'Authorization': `Bearer ${accessToken}` }
@@ -49,12 +50,17 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
         const blob = await response.blob();
 
         if (typeof Archive === 'undefined') {
-          throw new Error('LibArchive WASM engine could not be loaded. Please check your internet connection.');
+          throw new Error('LibArchive engine could not be detected. Please check your internet connection.');
         }
 
-        // Fix CORS by creating a local Blob worker that importScripts the remote bundle
-        // We use a classic worker (not module) to ensure importScripts works
-        const workerCode = `importScripts("${WORKER_BUNDLE_URL}");`;
+        /**
+         * FIX: Instead of importScripts, we fetch the actual bundle code.
+         * This prevents the "Module scripts don't support importScripts()" error.
+         */
+        const workerResponse = await fetch(WORKER_BUNDLE_URL);
+        if (!workerResponse.ok) throw new Error('Failed to fetch compression engine bundle.');
+        const workerCode = await workerResponse.text();
+        
         const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
         workerUrl = URL.createObjectURL(workerBlob);
 
@@ -68,7 +74,6 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
         const processNode = (node: any, path: string = '') => {
             Object.keys(node).forEach(key => {
                 const item = node[key];
-                // Skip internal metadata keys
                 if (key === '_isDir' || key === 'entries' || key === 'size') return;
                 
                 const currentPath = path ? `${path}/${key}` : key;
@@ -97,21 +102,25 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
 
         processNode(obj);
 
-        if (archiveItems.length === 0) throw new Error('Archive is empty or unsupported format.');
-
-        setItems(archiveItems);
-        setSelectedItems(new Set(archiveItems.map(i => i.id)));
+        if (isMounted) {
+          if (archiveItems.length === 0) throw new Error('Archive is empty or uses an unsupported encoding.');
+          setItems(archiveItems);
+          setSelectedItems(new Set(archiveItems.map(i => i.id)));
+        }
       } catch (err: any) {
         console.error('Archive Error:', err);
-        setError(err.message || 'Error loading archive content. Ensure it is a valid .zip, .rar, or .7z file.');
+        if (isMounted) {
+          setError(err.message || 'Error parsing archive content. Ensure the file is not corrupted.');
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     };
 
     loadArchive();
 
     return () => {
+      isMounted = false;
       if (workerUrl) URL.revokeObjectURL(workerUrl);
     };
   }, [archiveId, accessToken]);
@@ -165,8 +174,8 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                   <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0"></div>
                 </div>
                 <div className="text-center">
-                  <p className="text-slate-900 dark:text-white font-black text-lg">Analyzing Archive...</p>
-                  <p className="text-gray-500 text-sm font-medium mt-1">This may take a moment for large RAR or 7Z files</p>
+                  <p className="text-slate-900 dark:text-white font-black text-lg">WASM Engine Initializing...</p>
+                  <p className="text-gray-500 text-sm font-medium mt-1">Downloading core components for {fileName}</p>
                 </div>
               </div>
             ) : error ? (
@@ -175,9 +184,9 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                   <span className="material-symbols-outlined text-5xl">warning</span>
                 </div>
                 <div className="max-w-md">
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">Unsupported Format</h3>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">Extraction Error</h3>
                   <p className="text-gray-500 mb-8 leading-relaxed">{error}</p>
-                  <button onClick={onBack} className="px-8 py-3 bg-primary text-white rounded-xl font-black shadow-lg shadow-primary/30 hover:bg-blue-600 transition-all active:scale-95">Try another file</button>
+                  <button onClick={onBack} className="px-8 py-3 bg-primary text-white rounded-xl font-black shadow-lg shadow-primary/30 hover:bg-blue-600 transition-all active:scale-95">Go Back</button>
                 </div>
               </div>
             ) : (
@@ -191,7 +200,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                     <span className="text-slate-900 dark:text-white truncate max-w-[200px]">{fileName}</span>
                   </nav>
                   <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{fileName}</h1>
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{items.length} Files found inside</p>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{items.length} Elements detected inside</p>
                 </div>
 
                 <div className="bg-white dark:bg-surface-dark rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
@@ -200,7 +209,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 material-symbols-outlined !text-lg">search</span>
                       <input 
                         className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary/20 transition-all" 
-                        placeholder="Search archive content..." 
+                        placeholder="Search inside archive..." 
                         value={filterQuery}
                         onChange={(e) => setFilterQuery(e.target.value)}
                       />
@@ -247,11 +256,6 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                             <td className="px-4 py-4 text-xs font-bold text-gray-400">{item.dateModified}</td>
                           </tr>
                         ))}
-                        {filteredItems.length === 0 && (
-                          <tr>
-                            <td colSpan={4} className="py-20 text-center text-gray-400 text-sm italic">No files match your search</td>
-                          </tr>
-                        )}
                       </tbody>
                     </table>
                   </div>
@@ -270,15 +274,15 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                 </div>
                 <div className="flex flex-col">
                   <p className="text-sm font-black text-slate-900 dark:text-white">Ready for Extraction</p>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Selected items will be synced to Drive</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Targeting Google Drive</p>
                 </div>
               </div>
               <button 
                 disabled={selectedItems.size === 0}
                 onClick={() => onExtract(fileName)}
-                className="px-10 py-4 rounded-2xl bg-primary text-white text-sm font-black shadow-2xl shadow-primary/40 hover:bg-blue-600 disabled:opacity-40 disabled:grayscale transition-all active:scale-95 flex items-center gap-3"
+                className="px-10 py-4 rounded-2xl bg-primary text-white text-sm font-black shadow-2xl shadow-primary/40 hover:bg-blue-600 transition-all active:scale-95 flex items-center gap-3"
               >
-                <span className="material-symbols-outlined !text-lg">unarchive</span> Extract Files
+                <span className="material-symbols-outlined !text-lg">unarchive</span> Extract All
               </button>
             </div>
           </div>
