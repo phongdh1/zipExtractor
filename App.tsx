@@ -21,7 +21,10 @@ const App: React.FC = () => {
   const [selectedArchiveName, setSelectedArchiveName] = useState<string>('');
   const [extractionConfig, setExtractionConfig] = useState<ExtractionConfig | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(() => {
+    // Khôi phục token từ sessionStorage nếu có
+    return sessionStorage.getItem('drive_access_token');
+  });
   const [darkMode, setDarkMode] = useState<boolean>(() => 
     window.matchMedia('(prefers-color-scheme: dark)').matches
   );
@@ -40,6 +43,15 @@ const App: React.FC = () => {
         await gapi.client.init({
           discoveryDocs: [DISCOVERY_DOC],
         });
+        
+        // Nếu đã có token từ trước, thiết lập cho gapi client luôn
+        if (accessToken) {
+          gapi.client.setToken({ access_token: accessToken });
+          // Nếu đã có token, có thể tự động chuyển sang màn hình PICKER
+          if (currentView === View.LANDING) {
+            setCurrentView(View.PICKER);
+          }
+        }
       });
     };
     initGapi();
@@ -49,9 +61,17 @@ const App: React.FC = () => {
 
   const handleAuthSuccess = (token: string) => {
     setAccessToken(token);
+    // Lưu vào sessionStorage để duy trì phiên
+    sessionStorage.setItem('drive_access_token', token);
     gapi.client.setToken({ access_token: token });
     setShowAuthModal(false);
     setCurrentView(View.PICKER);
+  };
+
+  const handleLogout = () => {
+    setAccessToken(null);
+    sessionStorage.removeItem('drive_access_token');
+    setCurrentView(View.LANDING);
   };
 
   const startExtraction = (config: ExtractionConfig) => {

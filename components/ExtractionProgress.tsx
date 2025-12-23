@@ -21,29 +21,36 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ archiveId, conf
   const [isError, setIsError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     const performExtraction = async () => {
       if (!accessToken || !archiveId || !config) return;
 
       try {
         // 1. Tải file ZIP
-        setStatus('Downloading archive...');
+        if (isMounted) setStatus('Downloading archive...');
         const zipResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${archiveId}?alt=media`, {
           headers: { Authorization: `Bearer ${accessToken}` }
         });
-        const zipBlob = await zipResponse.blob();
-        setProgress(20);
+
+        if (!zipResponse.ok) {
+          throw new Error(`Download failed with status ${zipResponse.status}`);
+        }
+
+        const zipBuffer = await zipResponse.arrayBuffer();
+        if (isMounted) setProgress(20);
 
         // 2. Load ZIP
-        setStatus('Scanning contents...');
-        const zip = await JSZip.loadAsync(zipBlob);
+        if (isMounted) setStatus('Scanning contents...');
+        const zip = await JSZip.loadAsync(zipBuffer);
         const files = Object.keys(zip.files).filter(path => !zip.files[path].dir);
         const totalFiles = files.length;
-        setProgress(30);
+        if (isMounted) setProgress(30);
 
         // 3. Tạo subfolder nếu được yêu cầu
         let targetFolderId = config.destinationFolderId;
         if (config.createSubfolder) {
-          setStatus('Creating subfolder...');
+          if (isMounted) setStatus('Creating subfolder...');
           const meta = await gapi.client.drive.files.get({ fileId: archiveId, fields: 'name' });
           const subfolderName = meta.result.name.replace(/\.[^/.]+$/, "");
           
@@ -58,8 +65,9 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ archiveId, conf
         }
 
         // 4. Giải nén và Upload từng file
-        setStatus('Extracting & Uploading...');
+        if (isMounted) setStatus('Extracting & Uploading...');
         for (let i = 0; i < totalFiles; i++) {
+          if (!isMounted) break;
           const path = files[i];
           setCurrentFile(path);
           
@@ -70,8 +78,7 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ archiveId, conf
           // Chuẩn bị metadata cho Drive
           const fileName = path.split('/').pop() || 'unnamed';
           
-          // Để thực hiện upload nội dung thực tế một cách chính xác, 
-          // chúng ta sử dụng fetch thay vì gapi client cho multipart upload đơn giản hơn
+          // Sử dụng Multipart Upload API
           const metadata = {
             name: fileName,
             parents: [targetFolderId]
@@ -81,34 +88,42 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ archiveId, conf
           formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
           formData.append('file', content);
 
-          await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+          const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
             method: 'POST',
             headers: { Authorization: `Bearer ${accessToken}` },
             body: formData
           });
 
+          if (!uploadResponse.ok) {
+            console.warn(`Failed to upload ${fileName}`);
+          }
+
           const currentProgress = 30 + ((i + 1) / totalFiles) * 70;
-          setProgress(currentProgress);
+          if (isMounted) setProgress(currentProgress);
         }
 
-        setIsSuccess(true);
+        if (isMounted) setIsSuccess(true);
       } catch (error: any) {
         console.error('Extraction failed:', error);
-        setIsError(error.message || 'An unknown error occurred during extraction.');
+        if (isMounted) setIsError(error.message || 'An unknown error occurred during extraction.');
       }
     };
 
     performExtraction();
+
+    return () => {
+      isMounted = false;
+    };
   }, [archiveId, config, accessToken]);
 
   if (isError) {
     return (
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[200]">
-        <div className="w-full max-w-md bg-white dark:bg-surface-dark rounded-2xl p-8 text-center border border-red-100">
+        <div className="w-full max-w-md bg-white dark:bg-surface-dark rounded-2xl p-8 text-center border border-red-100 shadow-2xl">
           <span className="material-symbols-outlined text-red-500 text-5xl mb-4">error</span>
           <h2 className="text-xl font-bold mb-2">Extraction Failed</h2>
           <p className="text-sm text-gray-500 mb-6">{isError}</p>
-          <button onClick={onCancel} className="w-full py-3 bg-primary text-white rounded-xl font-bold">Try Again</button>
+          <button onClick={onCancel} className="w-full py-3 bg-primary text-white rounded-xl font-bold transition-transform active:scale-95">Try Again</button>
         </div>
       </div>
     );
@@ -125,7 +140,7 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ archiveId, conf
           <p className="text-gray-500 mb-8">All files from the archive have been moved to your Google Drive destination.</p>
           <button 
             onClick={onComplete}
-            className="w-full py-4 bg-primary text-white rounded-xl font-bold shadow-lg shadow-blue-500/20"
+            className="w-full py-4 bg-primary text-white rounded-xl font-bold shadow-lg shadow-blue-500/20 transition-transform active:scale-95"
           >
             Finish & Return
           </button>

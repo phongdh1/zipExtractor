@@ -18,52 +18,78 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
   const [items, setItems] = useState<ArchiveContent[]>([]);
   const [fileName, setFileName] = useState<string>('Loading...');
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [filterQuery, setFilterQuery] = useState('');
 
   useEffect(() => {
     const loadArchive = async () => {
       if (!accessToken || !archiveId) return;
       setIsLoading(true);
+      setError(null);
       try {
         // 1. Lấy thông tin metadata của file ZIP
         const metadata = await gapi.client.drive.files.get({
           fileId: archiveId,
-          fields: 'name, size'
+          fields: 'name, size, mimeType'
         });
-        setFileName(metadata.result.name);
+        
+        const fileMeta = metadata.result;
+        setFileName(fileMeta.name);
+
+        // Kiểm tra nếu là file Google Doc (không thể tải trực tiếp qua alt=media)
+        if (fileMeta.mimeType.includes('google-apps')) {
+          throw new Error('Google Docs/Sheets/Slides are not ZIP files. Please select a valid .zip file.');
+        }
 
         // 2. Tải nội dung binary của file ZIP
         const response = await fetch(`https://www.googleapis.com/drive/v3/files/${archiveId}?alt=media`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
+          headers: { 
+            'Authorization': `Bearer ${accessToken}`,
+          }
         });
-        const blob = await response.blob();
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || `Failed to download file (HTTP ${response.status})`);
+        }
+
+        const buffer = await response.arrayBuffer();
 
         // 3. Đọc file ZIP bằng JSZip
-        const zip = await JSZip.loadAsync(blob);
+        const zip = await JSZip.loadAsync(buffer);
         const archiveItems: ArchiveContent[] = [];
         
         zip.forEach((relativePath, file) => {
           const parts = relativePath.split('/');
           const isDir = file.dir;
-          const name = isDir ? parts[parts.length - 2] + '/' : parts[parts.length - 1];
+          const name = isDir ? (parts[parts.length - 2] || parts[0]) + '/' : parts[parts.length - 1];
           
-          // Logic đơn giản để hiển thị phẳng (hoặc bạn có thể xây dựng cây thư mục phức tạp hơn)
+          // Lấy size uncompressed
+          const uncompressedSize = (file as any)._data?.uncompressedSize || 0;
+          const sizeStr = isDir ? '--' : 
+            uncompressedSize > 1024 * 1024 
+              ? (uncompressedSize / (1024 * 1024)).toFixed(1) + ' MB' 
+              : (uncompressedSize / 1024).toFixed(1) + ' KB';
+
           archiveItems.push({
             id: relativePath,
             name: name,
-            size: isDir ? '--' : `${(file as any)._data.uncompressedSize / 1024 > 1024 ? ((file as any)._data.uncompressedSize / (1024 * 1024)).toFixed(1) + ' MB' : ((file as any)._data.uncompressedSize / 1024).toFixed(1) + ' KB'}`,
+            size: sizeStr,
             dateModified: new Date(file.date).toLocaleDateString(),
             type: isDir ? 'folder' : (name.match(/\.(jpg|jpeg|png|gif)$/i) ? 'image' : name.endsWith('.pdf') ? 'pdf' : 'doc')
           });
         });
 
+        if (archiveItems.length === 0) {
+          throw new Error('This ZIP file appears to be empty.');
+        }
+
         setItems(archiveItems);
-        // Tự động chọn tất cả các file
         setSelectedItems(new Set(archiveItems.map(i => i.id)));
-      } catch (error) {
-        console.error('Error reading archive:', error);
+      } catch (err: any) {
+        console.error('Error reading archive:', err);
+        setError(err.message || 'Could not read ZIP file. Make sure it is a valid archive.');
       } finally {
         setIsLoading(false);
       }
@@ -115,12 +141,25 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-4">
                 <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-gray-500 font-bold animate-pulse">Reading archive structure...</p>
+                <p className="text-gray-500 font-bold animate-pulse">Downloading and reading archive...</p>
+              </div>
+            ) : error ? (
+              <div className="flex flex-col items-center justify-center py-32 gap-6 text-center">
+                <div className="size-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center">
+                  <span className="material-symbols-outlined text-5xl">warning</span>
+                </div>
+                <div className="max-w-md">
+                  <h3 className="text-xl font-bold mb-2">Failed to load archive</h3>
+                  <p className="text-gray-500 mb-6">{error}</p>
+                  <button onClick={onBack} className="px-6 py-2 bg-primary text-white rounded-lg font-bold">Choose another file</button>
+                </div>
               </div>
             ) : (
               <>
                 <nav className="flex items-center gap-2 mb-4 text-xs font-medium text-gray-500">
-                  <span className="flex items-center gap-1 hover:text-primary cursor-pointer"><span className="material-symbols-outlined !text-base">cloud</span> My Drive</span>
+                  <span className="flex items-center gap-1 hover:text-primary cursor-pointer" onClick={onBack}>
+                    <span className="material-symbols-outlined !text-base">cloud</span> My Drive
+                  </span>
                   <span>/</span>
                   <span className="text-slate-900 dark:text-white font-bold">{fileName}</span>
                 </nav>
@@ -151,7 +190,12 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                     <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
                       <tr className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                         <th className="w-12 px-4 py-3 text-center">
-                           <input type="checkbox" checked={selectedItems.size === items.length} onChange={() => setSelectedItems(selectedItems.size === items.length ? new Set() : new Set(items.map(i => i.id)))} className="rounded text-primary" />
+                           <input 
+                             type="checkbox" 
+                             checked={selectedItems.size === items.length && items.length > 0} 
+                             onChange={() => setSelectedItems(selectedItems.size === items.length ? new Set() : new Set(items.map(i => i.id)))} 
+                             className="rounded text-primary" 
+                           />
                         </th>
                         <th className="px-4 py-3">Name</th>
                         <th className="px-4 py-3 w-32">Size</th>
@@ -189,20 +233,22 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
           </div>
         </div>
 
-        <div className="absolute bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-surface-dark/80 backdrop-blur-md p-4 shadow-xl z-30">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <p className="text-sm font-black">{selectedItems.size} files ready to unzip</p>
+        {!error && !isLoading && (
+          <div className="absolute bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-surface-dark/80 backdrop-blur-md p-4 shadow-xl z-30">
+            <div className="max-w-6xl mx-auto flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <p className="text-sm font-black">{selectedItems.size} files ready to unzip</p>
+              </div>
+              <button 
+                disabled={selectedItems.size === 0}
+                onClick={() => onExtract(fileName)}
+                className="px-8 py-3 rounded-xl bg-primary text-white text-sm font-bold shadow-lg shadow-blue-500/20 hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2 transition-all active:scale-95"
+              >
+                <span className="material-symbols-outlined !text-lg">unarchive</span> Extract All Files
+              </button>
             </div>
-            <button 
-              disabled={selectedItems.size === 0 || isLoading}
-              onClick={() => onExtract(fileName)}
-              className="px-8 py-3 rounded-xl bg-primary text-white text-sm font-bold shadow-lg shadow-blue-500/20 hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2 transition-all active:scale-95"
-            >
-              <span className="material-symbols-outlined !text-lg">unarchive</span> Extract All Files
-            </button>
           </div>
-        </div>
+        )}
       </main>
     </div>
   );
