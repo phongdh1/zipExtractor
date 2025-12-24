@@ -14,8 +14,8 @@ interface CompressionProgressProps {
 
 const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, accessToken, onComplete, onCancel }) => {
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('Đang khởi động...');
-  const [currentFile, setCurrentFile] = useState('Đang chuẩn bị...');
+  const [status, setStatus] = useState('Initializing...');
+  const [currentFile, setCurrentFile] = useState('Preparing files...');
   const [isSuccess, setIsSuccess] = useState(false);
   const [isError, setIsError] = useState<string | null>(null);
 
@@ -33,7 +33,7 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
           if (!isMounted) break;
           const id = fileIds[i];
           
-          if (isMounted) setStatus(`Đang tải tệp ${i + 1}/${total}...`);
+          if (isMounted) setStatus(`Downloading file ${i + 1}/${total}...`);
           
           const metaResponse = await gapi.client.drive.files.get({
             fileId: id,
@@ -53,7 +53,7 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
             headers: { Authorization: `Bearer ${accessToken}` }
           });
           
-          if (!response.ok) throw new Error(`Lỗi tải: ${meta.name}`);
+          if (!response.ok) throw new Error(`Download failed: ${meta.name}`);
           
           const buffer = await response.arrayBuffer();
           zipObject[meta.name] = new Uint8Array(buffer);
@@ -61,12 +61,12 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
           if (isMounted) setProgress(Math.round(((i + 1) / total) * 60));
         }
 
-        if (isMounted) setStatus('Đang thực hiện nén dữ liệu...');
+        if (isMounted) setStatus('Compressing data...');
         // fflate.zipSync creates a ZIP archive
         const zippedData = fflate.zipSync(zipObject, { level: 6 });
         if (isMounted) setProgress(80);
 
-        if (isMounted) setStatus('Đang lưu tệp nén vào Drive...');
+        if (isMounted) setStatus('Saving archive to Drive...');
         const zipName = `Compressed_${new Date().getTime()}.zip`;
         const metadata = { name: zipName, mimeType: 'application/zip' };
         
@@ -101,7 +101,7 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
           body
         });
 
-        if (!uploadResponse.ok) throw new Error('Upload ZIP thất bại');
+        if (!uploadResponse.ok) throw new Error('Failed to upload ZIP archive');
 
         if (isMounted) {
           setProgress(100);
@@ -109,7 +109,7 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
         }
       } catch (error: any) {
         console.error('Compression Error:', error);
-        if (isMounted) setIsError(error.message || 'Lỗi không xác định khi nén file.');
+        if (isMounted) setIsError(error.message || 'Unknown error occurred during compression.');
       }
     };
 
@@ -122,9 +122,9 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
       <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-[200]">
         <div className="w-full max-w-md bg-white dark:bg-surface-dark rounded-3xl p-10 text-center shadow-2xl">
           <span className="material-symbols-outlined text-red-500 text-5xl mb-4">error</span>
-          <h2 className="text-2xl font-black mb-3">Lỗi thao tác</h2>
+          <h2 className="text-2xl font-black mb-3">Compression Failed</h2>
           <p className="text-sm text-gray-500 mb-10 leading-relaxed">{isError}</p>
-          <button onClick={onCancel} className="w-full py-4 bg-primary text-white rounded-2xl font-black">Quay lại</button>
+          <button onClick={onCancel} className="w-full py-4 bg-primary text-white rounded-2xl font-black">Go Back</button>
         </div>
       </div>
     );
@@ -135,9 +135,9 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
       <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-[200]">
         <div className="w-full max-w-md bg-white dark:bg-surface-dark rounded-3xl p-10 text-center shadow-2xl">
           <span className="material-symbols-outlined text-green-600 text-6xl mb-6 filled animate-bounce">check_circle</span>
-          <h2 className="text-3xl font-black mb-3">Nén thành công!</h2>
-          <p className="text-gray-500 mb-12">Tệp ZIP đã được tạo và lưu trữ an toàn trong My Drive của bạn.</p>
-          <button onClick={onComplete} className="w-full py-4 bg-primary text-white rounded-2xl font-black">Hoàn tất</button>
+          <h2 className="text-3xl font-black mb-3">Success!</h2>
+          <p className="text-gray-500 mb-12">The ZIP archive was created and saved securely to your My Drive.</p>
+          <button onClick={onComplete} className="w-full py-4 bg-primary text-white rounded-2xl font-black">Complete</button>
         </div>
       </div>
     );
@@ -151,8 +151,8 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
             <span className="material-symbols-outlined filled animate-spin text-4xl">sync</span>
           </div>
           <div>
-            <h2 className="font-black text-3xl tracking-tight">Đang nén file...</h2>
-            <p className="text-xs text-primary font-black uppercase tracking-widest mt-1">Tiến độ: {progress}%</p>
+            <h2 className="font-black text-3xl tracking-tight">Compressing files...</h2>
+            <p className="text-xs text-primary font-black uppercase tracking-widest mt-1">Progress: {progress}%</p>
           </div>
         </div>
         
@@ -167,7 +167,7 @@ const CompressionProgress: React.FC<CompressionProgressProps> = ({ fileIds, acce
           <div className="bg-gray-50 dark:bg-zinc-800/40 rounded-3xl p-8 flex items-center gap-8 border border-gray-100 dark:border-white/5">
             <span className="material-symbols-outlined text-3xl text-primary/60">description</span>
             <div className="min-w-0">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Đang nạp</p>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Processing</p>
               <p className="text-base font-black truncate text-slate-700 dark:text-zinc-200">{currentFile}</p>
             </div>
           </div>

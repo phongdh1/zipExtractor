@@ -152,12 +152,12 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, onZipRequest, d
         <main className="flex-1 flex flex-col min-w-0 bg-background-light dark:bg-background-dark overflow-hidden relative">
           <div className="px-6 pt-6 pb-2 flex flex-col gap-4 shrink-0">
             <div className="flex items-center justify-between">
-              <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Tất cả tệp tin</h1>
+              <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">All Files</h1>
               <div className="relative w-64">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-gray-400 !text-lg">search</span>
                 <input 
                   className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-surface-dark text-sm outline-none focus:ring-2 focus:ring-primary/20" 
-                  placeholder="Tìm kiếm..." 
+                  placeholder="Search files..." 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -190,9 +190,9 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, onZipRequest, d
                   <thead className="bg-gray-50 dark:bg-gray-800/30 border-b border-gray-200 dark:border-gray-800">
                     <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                       <th className="py-3 px-4 w-12 text-center"></th>
-                      <th className="py-3 px-4">Tên</th>
-                      <th className="py-3 px-4 w-32">Dung lượng</th>
-                      <th className="py-3 px-4 w-40 text-right pr-8">Ngày sửa</th>
+                      <th className="py-3 px-4">Name</th>
+                      <th className="py-3 px-4 w-32">Size</th>
+                      <th className="py-3 px-4 w-40 text-right pr-8">Date Modified</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -234,11 +234,11 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, onZipRequest, d
             <div className="flex items-center gap-4">
               {selectedIds.size > 0 ? (
                 <div className="flex flex-col">
-                  <p className="text-sm font-black text-slate-900 dark:text-white">Đã chọn {selectedIds.size} tệp tin</p>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Chọn hành động để tiếp tục</p>
+                  <p className="text-sm font-black text-slate-900 dark:text-white">Selected {selectedIds.size} files</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Choose an action to continue</p>
                 </div>
               ) : (
-                <span className="text-sm text-gray-400 italic font-bold">Vui lòng chọn tệp tin...</span>
+                <span className="text-sm text-gray-400 italic font-bold">Select files to begin...</span>
               )}
             </div>
             <div className="flex gap-3">
@@ -247,7 +247,7 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, onZipRequest, d
                   onClick={() => onZipRequest?.(Array.from(selectedIds))}
                   className="px-6 py-3 rounded-xl bg-slate-800 text-white text-sm font-black flex items-center gap-2 hover:bg-slate-900 transition-all active:scale-95"
                 >
-                  <span className="material-symbols-outlined !text-lg">folder_zip</span> Nén lại
+                  <span className="material-symbols-outlined !text-lg">folder_zip</span> Zip Selected
                 </button>
                )}
                <button 
@@ -255,7 +255,7 @@ const DrivePicker: React.FC<DrivePickerProps> = ({ onFileSelect, onZipRequest, d
                 disabled={!isArchiveSelected}
                 className="px-10 py-3 rounded-xl bg-primary text-white text-sm font-black flex items-center gap-3 hover:bg-blue-600 disabled:opacity-30 disabled:grayscale transition-all shadow-lg shadow-primary/20 active:scale-95"
               >
-                Giải nén <span className="material-symbols-outlined !text-lg">unarchive</span>
+                Extract <span className="material-symbols-outlined !text-lg">unarchive</span>
               </button>
             </div>
           </div>

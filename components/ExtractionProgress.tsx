@@ -26,7 +26,6 @@ function stripZipExtension(name: string) {
 }
 
 function isUnsafePath(p: string) {
-  // Basic traversal / weird path guard
   if (!p) return true;
   if (p.includes("..")) return true;
   if (p.startsWith("/") || p.startsWith("\\")) return true;
@@ -63,7 +62,6 @@ async function uploadMultipartRelated(
 
   const closePart = encoder.encode(closeDelimiter);
 
-  // Merge into one Uint8Array
   const totalLen =
     metaPart.byteLength +
     fileHeaderPart.byteLength +
@@ -101,11 +99,10 @@ async function uploadMultipartRelated(
     throw new Error(`Upload failed (${res.status}): ${errText}`);
   }
 
-  return res.json(); // { id, name, ... }
+  return res.json();
 }
 
-// Cache folders to reduce Drive API calls
-const folderCache = new Map<string, string>(); // key = `${parentId}:${folderName}`
+const folderCache = new Map<string, string>();
 
 async function ensureFolder(parentId: string, folderName: string): Promise<string> {
   const key = `${parentId}:${folderName}`;
@@ -114,7 +111,6 @@ async function ensureFolder(parentId: string, folderName: string): Promise<strin
 
   const safeName = folderName.replace(/'/g, "\\'");
 
-  // Try find existing folder under parent
   const q = [
     `'${parentId}' in parents`,
     `name='${safeName}'`,
@@ -171,8 +167,8 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
   onCancel,
 }) => {
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState("Đang khởi động...");
-  const [currentFile, setCurrentFile] = useState("Đang chuẩn bị...");
+  const [status, setStatus] = useState("Initializing...");
+  const [currentFile, setCurrentFile] = useState("Preparing...");
   const [isSuccess, setIsSuccess] = useState(false);
   const [isError, setIsError] = useState<string | null>(null);
 
@@ -188,22 +184,20 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
       if (!accessToken || !archiveId || !config) return;
 
       try {
-        // 1) Download ZIP bytes
-        if (isMounted) setStatus("Đang tải tệp ZIP từ Drive...");
+        if (isMounted) setStatus("Downloading archive from Drive...");
         const zipResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files/${archiveId}?alt=media&supportsAllDrives=true`,
           { headers: { Authorization: `Bearer ${accessToken}` } }
         );
         if (!zipResponse.ok) {
           const t = await zipResponse.text().catch(() => "");
-          throw new Error(`Lỗi tải file (${zipResponse.status}): ${t}`);
+          throw new Error(`Download error (${zipResponse.status}): ${t}`);
         }
 
         const arrayBuffer = await zipResponse.arrayBuffer();
         if (isMounted) setProgress(15);
 
-        // 2) Unzip
-        if (isMounted) setStatus("Đang giải nén dữ liệu...");
+        if (isMounted) setStatus("Extracting data...");
         const uint8 = new Uint8Array(arrayBuffer);
 
         const unzipped: UnzippedMap = fflate.unzipSync(uint8);
@@ -211,21 +205,19 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
           .filter((p) => !!p)
           .filter((p) => !isUnsafePath(p));
 
-        // Only real files for progress (ignore folder entries)
         const filePaths = allPaths.filter((p) => !p.endsWith("/"));
         const totalFiles = filePaths.length;
 
         if (!totalFiles) {
-          throw new Error("Không tìm thấy file hợp lệ trong archive (hoặc archive rỗng).");
+          throw new Error("No valid files found in the archive.");
         }
 
         if (isMounted) setProgress(30);
 
-        // 3) Determine target folder
         let targetFolderId = config.destinationFolderId;
 
         if (config.createSubfolder) {
-          if (isMounted) setStatus("Đang tạo thư mục mới...");
+          if (isMounted) setStatus("Creating new folder...");
 
           const meta = await gapi.client.drive.files.get({
             fileId: archiveId,
@@ -247,8 +239,7 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
           targetFolderId = folderResponse.result.id;
         }
 
-        // 4) Upload extracted files (preserve folder structure)
-        if (isMounted) setStatus("Đang đồng bộ lên Drive...");
+        if (isMounted) setStatus("Uploading to Drive...");
 
         for (let i = 0; i < totalFiles; i++) {
           if (!isMounted) break;
@@ -257,7 +248,6 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
           const data = unzipped[path];
 
           if (!data || !(data instanceof Uint8Array)) {
-            // fflate returns Uint8Array; skip if anything weird
             continue;
           }
 
@@ -267,10 +257,8 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
           const dirPath = lastSlash > -1 ? path.slice(0, lastSlash) : "";
           const fileName = lastSlash > -1 ? path.slice(lastSlash + 1) : path;
 
-          // Ensure folder chain exists
           const parentForThisFile = await ensureFolderPath(targetFolderId, dirPath);
 
-          // Upload with proper multipart/related
           await uploadMultipartRelated(accessToken, parentForThisFile, fileName, data);
 
           if (isMounted) {
@@ -284,11 +272,10 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
           setIsSuccess(true);
         }
       } catch (error: any) {
-        // provide a more actionable message
         const msg =
           typeof error?.message === "string"
-            ? `Quá trình giải nén hoặc tải lên thất bại: ${error.message}`
-            : "Quá trình giải nén hoặc tải lên thất bại. Vui lòng kiểm tra quyền truy cập và dung lượng Drive.";
+            ? `Extraction or upload failed: ${error.message}`
+            : "Extraction or upload failed. Please check your storage quota and permissions.";
         fail(msg, error);
       }
     };
@@ -305,13 +292,13 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
       <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 z-[200]">
         <div className="w-full max-w-md bg-white dark:bg-surface-dark rounded-3xl p-10 text-center shadow-2xl">
           <span className="material-symbols-outlined text-red-500 text-5xl mb-4">error</span>
-          <h2 className="text-2xl font-black mb-3">Lỗi thao tác</h2>
+          <h2 className="text-2xl font-black mb-3">Operation Error</h2>
           <p className="text-sm text-gray-500 mb-10 leading-relaxed">{isError}</p>
           <button
             onClick={onCancel}
             className="w-full py-4 bg-primary text-white rounded-2xl font-black"
           >
-            Thử lại
+            Go Back
           </button>
         </div>
       </div>
@@ -325,15 +312,15 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
           <span className="material-symbols-outlined text-green-600 text-6xl mb-6 filled animate-bounce">
             check_circle
           </span>
-          <h2 className="text-3xl font-black mb-3">Thành công!</h2>
+          <h2 className="text-3xl font-black mb-3">Success!</h2>
           <p className="text-gray-500 mb-12">
-            Tệp tin đã được giải nén thành công vào Google Drive của bạn.
+            Files have been successfully extracted to your Google Drive.
           </p>
           <button
             onClick={onComplete}
             className="w-full py-4 bg-primary text-white rounded-2xl font-black"
           >
-            Quay lại trình duyệt
+            Back to Browser
           </button>
         </div>
       </div>
@@ -348,9 +335,9 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
             <span className="material-symbols-outlined filled animate-spin text-4xl">sync</span>
           </div>
           <div>
-            <h2 className="font-black text-3xl">Đang giải nén</h2>
+            <h2 className="font-black text-3xl">Extracting...</h2>
             <p className="text-xs text-primary font-black uppercase tracking-widest mt-1">
-              Tiến độ: {progress}%
+              Progress: {progress}%
             </p>
           </div>
         </div>
@@ -374,7 +361,7 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
             </span>
             <div className="min-w-0">
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
-                Đang xử lý
+                Processing
               </p>
               <p className="text-base font-black truncate">{currentFile}</p>
             </div>

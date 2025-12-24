@@ -15,13 +15,85 @@ interface ArchivePreviewProps {
   accessToken: string | null;
 }
 
+interface TreeNode {
+  id: string; // Full path
+  name: string;
+  isFolder: boolean;
+  children: TreeNode[];
+  data?: ArchiveContent;
+}
+
 const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, onBack, darkMode, onToggleTheme, accessToken }) => {
-  const [items, setItems] = useState<ArchiveContent[]>([]);
+  const [treeRoot, setTreeRoot] = useState<TreeNode | null>(null);
   const [fileName, setFileName] = useState<string>('Loading...');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [filterQuery, setFilterQuery] = useState('');
+
+  const buildTree = (unzipped: Record<string, Uint8Array>) => {
+    const root: TreeNode = { id: '', name: 'root', isFolder: true, children: [] };
+    
+    Object.keys(unzipped).forEach(path => {
+      const parts = path.split('/').filter(p => p !== '');
+      let currentNode = root;
+      let currentPath = '';
+
+      parts.forEach((part, index) => {
+        currentPath += (currentPath ? '/' : '') + part;
+        const isLast = index === parts.length - 1;
+        const isFolder = !isLast || path.endsWith('/');
+        
+        let existingChild = currentNode.children.find(child => child.name === part);
+        
+        if (!existingChild) {
+          const newNode: TreeNode = {
+            id: currentPath + (isFolder ? '/' : ''),
+            name: part,
+            isFolder: isFolder,
+            children: []
+          };
+          
+          if (!isFolder || isLast) {
+             const size = unzipped[path].length;
+             newNode.data = {
+               id: path,
+               name: part,
+               size: isFolder ? '--' : (size > 1024 * 1024 ? (size / (1024 * 1024)).toFixed(1) + ' MB' : (size / 1024).toFixed(1) + ' KB'),
+               dateModified: new Date().toLocaleDateString(),
+               type: isFolder ? 'folder' : getFileType(part)
+             };
+          }
+          
+          currentNode.children.push(newNode);
+          existingChild = newNode;
+        }
+        
+        currentNode = existingChild;
+      });
+    });
+
+    // Sort folders first
+    const sortTree = (node: TreeNode) => {
+      node.children.sort((a, b) => {
+        if (a.isFolder === b.isFolder) return a.name.localeCompare(b.name);
+        return a.isFolder ? -1 : 1;
+      });
+      node.children.forEach(sortTree);
+    };
+    sortTree(root);
+    
+    return root;
+  };
+
+  const getFileType = (name: string): any => {
+    const lower = name.toLowerCase();
+    if (lower.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) return 'image';
+    if (lower.endsWith('.pdf')) return 'pdf';
+    if (lower.match(/\.(doc|docx|txt|rtf|odt)$/)) return 'doc';
+    return 'text';
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -47,40 +119,29 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
         const uint8 = new Uint8Array(arrayBuffer);
 
         try {
-          // fflate.unzipSync is used to get the file list
           const unzipped = fflate.unzipSync(uint8);
+          const root = buildTree(unzipped);
           
-          const archiveItems: ArchiveContent[] = Object.keys(unzipped).map(path => {
-              const parts = path.split('/');
-              const name = parts.pop() || parts.pop() || 'Unnamed';
-              const isDir = path.endsWith('/');
-              const size = unzipped[path].length;
-
-              let fileType: any = isDir ? 'folder' : 'text';
-              const lowerKey = name.toLowerCase();
-              if (lowerKey.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) fileType = 'image';
-              else if (lowerKey.endsWith('.pdf')) fileType = 'pdf';
-              else if (lowerKey.match(/\.(doc|docx|txt|rtf|odt)$/)) fileType = 'doc';
-
-              return {
-                  id: path,
-                  name: name,
-                  size: isDir ? '--' : (size > 1024 * 1024 ? (size / (1024 * 1024)).toFixed(1) + ' MB' : (size / 1024).toFixed(1) + ' KB'),
-                  dateModified: new Date().toLocaleDateString(),
-                  type: fileType
-              };
-          });
-
           if (isMounted) {
-            setItems(archiveItems);
-            setSelectedItems(new Set(archiveItems.map(i => i.id)));
+            setTreeRoot(root);
+            // Default select all
+            const allPaths = new Set<string>();
+            const traverse = (node: TreeNode) => {
+              if (node.id) allPaths.add(node.id);
+              node.children.forEach(traverse);
+            };
+            traverse(root);
+            setSelectedPaths(allPaths);
+            
+            // Auto expand first level
+            setExpandedPaths(new Set(root.children.filter(c => c.isFolder).map(c => c.id)));
           }
         } catch (unzipErr) {
-          throw new Error('Định dạng tệp tin này (có thể là RAR/7Z) chưa được hỗ trợ bởi công cụ fflate hiện tại. Vui lòng sử dụng định dạng ZIP.');
+          throw new Error('This archive format (possibly RAR/7Z) is not yet supported. Please use ZIP format.');
         }
       } catch (err: any) {
         console.error('Extraction Error:', err);
-        if (isMounted) setError(err.message || 'Không thể đọc tệp tin nén.');
+        if (isMounted) setError(err.message || 'Could not read archive file.');
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -90,15 +151,89 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
     return () => { isMounted = false; };
   }, [archiveId, accessToken]);
 
-  const filteredItems = useMemo(() => {
-    return items.filter(i => i.name.toLowerCase().includes(filterQuery.toLowerCase()));
-  }, [filterQuery, items]);
+  const toggleExpand = (id: string) => {
+    const newExpanded = new Set(expandedPaths);
+    if (newExpanded.has(id)) newExpanded.delete(id);
+    else newExpanded.add(id);
+    setExpandedPaths(newExpanded);
+  };
 
-  const toggleItem = (id: string) => {
-    const newSelected = new Set(selectedItems);
-    if (newSelected.has(id)) newSelected.delete(id);
-    else newSelected.add(id);
-    setSelectedItems(newSelected);
+  const togglePathSelection = (node: TreeNode) => {
+    const newSelected = new Set(selectedPaths);
+    const isCurrentlySelected = selectedPaths.has(node.id);
+    
+    const traverse = (n: TreeNode, select: boolean) => {
+      if (select) newSelected.add(n.id);
+      else newSelected.delete(n.id);
+      n.children.forEach(c => traverse(c, select));
+    };
+    
+    traverse(node, !isCurrentlySelected);
+    setSelectedPaths(newSelected);
+  };
+
+  const renderTreeNode = (node: TreeNode, level: number = 0) => {
+    if (node.name === 'root') {
+      return node.children.map(child => renderTreeNode(child, level));
+    }
+
+    if (filterQuery && !node.name.toLowerCase().includes(filterQuery.toLowerCase()) && !node.isFolder) {
+      return null;
+    }
+
+    const isExpanded = expandedPaths.has(node.id);
+    const isSelected = selectedPaths.has(node.id);
+    const hasChildren = node.children.length > 0;
+
+    const iconInfo = getIcon(node.isFolder ? 'folder' : (node.data?.type || 'text'));
+
+    return (
+      <div key={node.id}>
+        <div 
+          className={`group flex items-center py-2 px-4 hover:bg-primary/5 cursor-pointer transition-colors border-l-2 ${isSelected ? 'border-primary' : 'border-transparent'}`}
+          style={{ paddingLeft: `${(level * 20) + 16}px` }}
+        >
+          <div className="flex items-center gap-2 flex-1 min-w-0" onClick={() => node.isFolder ? toggleExpand(node.id) : togglePathSelection(node)}>
+            <div className="flex items-center justify-center w-6">
+              {node.isFolder && (
+                <span className="material-symbols-outlined !text-lg text-gray-400 group-hover:text-primary transition-transform" style={{ transform: isExpanded ? 'rotate(90deg)' : 'none' }}>
+                  chevron_right
+                </span>
+              )}
+            </div>
+            
+            <input 
+              type="checkbox" 
+              checked={isSelected}
+              onChange={(e) => {
+                e.stopPropagation();
+                togglePathSelection(node);
+              }}
+              className="rounded text-primary focus:ring-primary/20 mr-2" 
+            />
+
+            <div className={`size-8 rounded-lg flex items-center justify-center shrink-0 ${iconInfo.color}`}>
+              <span className="material-symbols-outlined !text-lg">{iconInfo.icon}</span>
+            </div>
+            
+            <span className="text-sm font-bold text-slate-700 dark:text-zinc-200 truncate pr-4">
+              {node.name}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-8 shrink-0 text-xs font-bold text-gray-400">
+            <span className="w-20 uppercase">{node.isFolder ? '--' : node.data?.size}</span>
+            <span className="w-32 text-right">{node.data?.dateModified || '--'}</span>
+          </div>
+        </div>
+        
+        {node.isFolder && isExpanded && (
+          <div className="border-l border-gray-100 dark:border-gray-800 ml-8">
+            {node.children.map(child => renderTreeNode(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const getIcon = (type: string) => {
@@ -111,6 +246,26 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
     }
   };
 
+  const totalFiles = useMemo(() => {
+    let count = 0;
+    const traverse = (node: TreeNode) => {
+      if (!node.isFolder) count++;
+      node.children.forEach(traverse);
+    };
+    if (treeRoot) traverse(treeRoot);
+    return count;
+  }, [treeRoot]);
+
+  const selectedCount = useMemo(() => {
+    let count = 0;
+    const traverse = (node: TreeNode) => {
+      if (!node.isFolder && selectedPaths.has(node.id)) count++;
+      node.children.forEach(traverse);
+    };
+    if (treeRoot) traverse(treeRoot);
+    return count;
+  }, [treeRoot, selectedPaths]);
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background-light dark:bg-background-dark font-sans">
       <header className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-surface-dark px-6 py-3 shrink-0 z-10 shadow-sm">
@@ -118,7 +273,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
           <div className="size-8 flex items-center justify-center bg-primary/10 rounded-lg text-primary">
             <span className="material-symbols-outlined text-lg filled">arrow_back</span>
           </div>
-          <h2 className="text-lg font-bold">Quay lại Drive</h2>
+          <h2 className="text-lg font-bold">Back to Drive</h2>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={onToggleTheme} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500">
@@ -134,7 +289,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6">
                 <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-slate-900 dark:text-white font-black text-lg">Đang đọc dữ liệu ZIP...</p>
+                <p className="text-slate-900 dark:text-white font-black text-lg">Reading ZIP data...</p>
               </div>
             ) : error ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6 text-center">
@@ -142,73 +297,37 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
                   <span className="material-symbols-outlined text-5xl">warning</span>
                 </div>
                 <div className="max-w-md">
-                   <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">Thông báo</h3>
+                   <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">Notification</h3>
                    <p className="text-gray-500 text-sm mb-8 leading-relaxed">{error}</p>
-                   <button onClick={onBack} className="px-8 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 active:scale-95 transition-all">Quay lại</button>
+                   <button onClick={onBack} className="px-8 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 active:scale-95 transition-all">Go Back</button>
                 </div>
               </div>
             ) : (
               <>
                 <div className="mb-8">
                   <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{fileName}</h1>
-                  <p className="text-xs font-black text-gray-400 uppercase tracking-widest mt-1">{items.length} tệp tin</p>
+                  <p className="text-xs font-black text-gray-400 uppercase tracking-widest mt-1">{totalFiles} total files</p>
                 </div>
 
                 <div className="bg-white dark:bg-surface-dark rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                  <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/30">
                     <div className="relative flex-1 max-w-md">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 material-symbols-outlined !text-lg">search</span>
                       <input 
-                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/20 transition-all" 
-                        placeholder="Tìm trong tệp nén..." 
+                        className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary/20 transition-all" 
+                        placeholder="Search in archive..." 
                         value={filterQuery}
                         onChange={(e) => setFilterQuery(e.target.value)}
                       />
                     </div>
+                    <div className="flex items-center gap-8 text-[10px] font-black text-gray-400 uppercase tracking-widest px-4">
+                      <span className="w-20">Size</span>
+                      <span className="w-32 text-right">Modified</span>
+                    </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead className="bg-gray-50 dark:bg-gray-800/30 border-b border-gray-100 dark:border-gray-800">
-                        <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                          <th className="w-14 px-4 py-4 text-center">
-                             <input 
-                               type="checkbox" 
-                               checked={selectedItems.size === items.length} 
-                               onChange={() => setSelectedItems(selectedItems.size === items.length ? new Set() : new Set(items.map(i => i.id)))} 
-                               className="rounded text-primary focus:ring-primary/20" 
-                             />
-                          </th>
-                          <th className="px-4 py-4">Tên tệp</th>
-                          <th className="px-4 py-4 w-32">Dung lượng</th>
-                          <th className="px-4 py-4 w-40">Ngày sửa</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-                        {filteredItems.map(item => (
-                          <tr key={item.id} className="hover:bg-primary/5 transition-colors cursor-pointer group">
-                            <td className="px-4 py-4 text-center">
-                              <input 
-                                type="checkbox" 
-                                checked={selectedItems.has(item.id)} 
-                                onChange={() => toggleItem(item.id)}
-                                className="rounded text-primary focus:ring-primary/20" 
-                              />
-                            </td>
-                            <td className="px-4 py-4" onClick={() => toggleItem(item.id)}>
-                              <div className="flex items-center gap-3">
-                                <div className={`size-9 rounded-xl flex items-center justify-center shrink-0 ${getIcon(item.type).color}`}>
-                                  <span className="material-symbols-outlined !text-xl">{getIcon(item.type).icon}</span>
-                                </div>
-                                <span className="text-sm font-bold text-slate-700 dark:text-zinc-200 truncate max-w-[400px]">{item.name}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 text-xs font-black text-gray-400 uppercase">{item.size}</td>
-                            <td className="px-4 py-4 text-xs font-bold text-gray-400">{item.dateModified}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="py-2">
+                    {treeRoot && renderTreeNode(treeRoot)}
                   </div>
                 </div>
               </>
@@ -221,19 +340,19 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
             <div className="max-w-6xl mx-auto flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="size-11 bg-primary rounded-2xl flex items-center justify-center text-white font-black shadow-lg shadow-primary/30">
-                    {selectedItems.size}
+                    {selectedCount}
                 </div>
                 <div>
-                  <p className="text-sm font-black text-slate-900 dark:text-white">Tệp đã chọn</p>
-                  <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Sẵn sàng chuyển sang Drive</p>
+                  <p className="text-sm font-black text-slate-900 dark:text-white">Files Selected</p>
+                  <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Ready to transfer to Drive</p>
                 </div>
               </div>
               <button 
-                disabled={selectedItems.size === 0}
+                disabled={selectedCount === 0}
                 onClick={() => onExtract(fileName)}
                 className="px-10 py-4 rounded-2xl bg-primary text-white text-sm font-black shadow-xl shadow-primary/30 hover:bg-blue-600 disabled:opacity-40 transition-all active:scale-95 flex items-center gap-2"
               >
-                Tiếp tục giải nén <span className="material-symbols-outlined !text-lg">arrow_forward</span>
+                Continue to Extract <span className="material-symbols-outlined !text-lg">arrow_forward</span>
               </button>
             </div>
           </div>
