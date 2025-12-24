@@ -1,11 +1,12 @@
+
 // ExtractionProgress.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// Declare fflate and gapi as global constants
-declare const fflate: any;
+// Declare gapi as global constant
 declare const gapi: any;
 
 import React, { useEffect, useState } from "react";
+import * as fflate from 'fflate';
 import { ExtractionConfig } from "./DestinationPicker";
 
 interface ExtractionProgressProps {

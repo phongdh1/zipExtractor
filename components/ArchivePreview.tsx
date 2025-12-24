@@ -1,9 +1,9 @@
 
-// Declare fflate and gapi as global constants
-declare const fflate: any;
+// Declare gapi as global constant
 declare const gapi: any;
 
 import React, { useState, useEffect, useMemo } from 'react';
+import * as fflate from 'fflate';
 import { ArchiveContent } from '../types';
 
 interface ArchivePreviewProps {
@@ -46,8 +46,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
         const arrayBuffer = await response.arrayBuffer();
         const uint8 = new Uint8Array(arrayBuffer);
 
-        // fflate.unzipSync là cách nhanh nhất để lấy danh sách file
-        // Đối với file cực lớn, fflate.unzip (async) sẽ tốt hơn
+        // fflate.unzipSync is used to get the file list
         const unzipped = fflate.unzipSync(uint8);
         
         const archiveItems: ArchiveContent[] = Object.keys(unzipped).map(path => {
