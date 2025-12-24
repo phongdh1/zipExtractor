@@ -1,3 +1,4 @@
+
 // Declare gapi as a global constant to satisfy TypeScript compiler
 declare const gapi: any;
 
@@ -7,10 +8,10 @@ import DrivePicker from './components/DrivePicker';
 import ArchivePreview from './components/ArchivePreview';
 import DestinationPicker, { ExtractionConfig } from './components/DestinationPicker';
 import ExtractionProgress from './components/ExtractionProgress';
+import CompressionProgress from './components/CompressionProgress';
 import GoogleAuthModal from './components/GoogleAuthModal';
 import { View } from './types';
 
-// CẤU HÌNH GOOGLE API
 const CLIENT_ID = '627461813768-32hbllfh1ij4t5f4hj31rvgfbtctab9h.apps.googleusercontent.com'; 
 const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
@@ -19,10 +20,10 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>(View.LANDING);
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [selectedArchiveName, setSelectedArchiveName] = useState<string>('');
+  const [selectedFilesForZip, setSelectedFilesForZip] = useState<string[]>([]);
   const [extractionConfig, setExtractionConfig] = useState<ExtractionConfig | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(() => {
-    // Khôi phục token từ sessionStorage nếu có
     return sessionStorage.getItem('drive_access_token');
   });
   const [darkMode, setDarkMode] = useState<boolean>(() => 
@@ -44,10 +45,8 @@ const App: React.FC = () => {
           discoveryDocs: [DISCOVERY_DOC],
         });
         
-        // Nếu đã có token từ trước, thiết lập cho gapi client luôn
         if (accessToken) {
           gapi.client.setToken({ access_token: accessToken });
-          // Nếu đã có token, có thể tự động chuyển sang màn hình PICKER
           if (currentView === View.LANDING) {
             setCurrentView(View.PICKER);
           }
@@ -61,22 +60,20 @@ const App: React.FC = () => {
 
   const handleAuthSuccess = (token: string) => {
     setAccessToken(token);
-    // Lưu vào sessionStorage để duy trì phiên
     sessionStorage.setItem('drive_access_token', token);
     gapi.client.setToken({ access_token: token });
     setShowAuthModal(false);
     setCurrentView(View.PICKER);
   };
 
-  const handleLogout = () => {
-    setAccessToken(null);
-    sessionStorage.removeItem('drive_access_token');
-    setCurrentView(View.LANDING);
-  };
-
   const startExtraction = (config: ExtractionConfig) => {
     setExtractionConfig(config);
     setCurrentView(View.EXTRACTING);
+  };
+
+  const handleZipFiles = (fileIds: string[]) => {
+    setSelectedFilesForZip(fileIds);
+    setCurrentView(View.COMPRESSING);
   };
 
   const renderView = () => {
@@ -89,7 +86,8 @@ const App: React.FC = () => {
             onFileSelect={(id) => {
               setSelectedArchiveId(id);
               setCurrentView(View.PREVIEW);
-            }} 
+            }}
+            onZipRequest={handleZipFiles}
             darkMode={darkMode}
             onToggleTheme={toggleDarkMode}
             accessToken={accessToken}
@@ -126,6 +124,15 @@ const App: React.FC = () => {
             accessToken={accessToken}
             onComplete={() => setCurrentView(View.PICKER)} 
             onCancel={() => setCurrentView(View.DESTINATION)}
+          />
+        );
+      case View.COMPRESSING:
+        return (
+          <CompressionProgress 
+            fileIds={selectedFilesForZip}
+            accessToken={accessToken}
+            onComplete={() => setCurrentView(View.PICKER)}
+            onCancel={() => setCurrentView(View.PICKER)}
           />
         );
       default:

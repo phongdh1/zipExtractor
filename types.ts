@@ -4,10 +4,11 @@ export enum View {
   PICKER = 'PICKER',
   PREVIEW = 'PREVIEW',
   DESTINATION = 'DESTINATION',
-  EXTRACTING = 'EXTRACTING'
+  EXTRACTING = 'EXTRACTING',
+  COMPRESSING = 'COMPRESSING'
 }
 
-export type FileCategory = 'ZIP' | 'RAR' | '7Z' | 'FOLDER' | 'PDF' | 'IMAGE' | 'DOC' | 'SHEET' | 'SLIDE' | 'FILE';
+export type FileCategory = 'ZIP' | 'RAR' | '7Z' | 'TAR' | 'FOLDER' | 'PDF' | 'IMAGE' | 'DOC' | 'SHEET' | 'SLIDE' | 'FILE';
 
 export interface DriveFile {
   id: string;
