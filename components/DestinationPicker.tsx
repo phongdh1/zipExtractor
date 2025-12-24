@@ -1,3 +1,4 @@
+
 // Declare gapi as a global constant
 declare const gapi: any;
 
@@ -5,15 +6,17 @@ import React, { useState, useEffect } from 'react';
 
 interface DestinationPickerProps {
   onCancel: () => void;
-  onConfirm: (config: ExtractionConfig) => void;
+  onConfirm: (config: any) => void;
   accessToken: string | null;
   archiveName: string;
+  mode?: 'extract' | 'compress';
 }
 
 export interface ExtractionConfig {
   destinationFolderId: string;
   createSubfolder: boolean;
   conflictResolution: 'keep' | 'overwrite' | 'skip';
+  zipFileName?: string;
 }
 
 interface FolderPath {
@@ -21,17 +24,27 @@ interface FolderPath {
   name: string;
 }
 
-const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfirm, accessToken, archiveName }) => {
+const DestinationPicker: React.FC<DestinationPickerProps> = ({ 
+  onCancel, 
+  onConfirm, 
+  accessToken, 
+  archiveName,
+  mode = 'extract'
+}) => {
   const [folders, setFolders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentFolderId, setCurrentFolderId] = useState<string>('root');
   const [pathHistory, setPathHistory] = useState<FolderPath[]>([{ id: 'root', name: 'My Drive' }]);
   
-  // States cho Options
+  // Options states
   const [createSubfolder, setCreateSubfolder] = useState(true);
   const [conflictResolution, setConflictResolution] = useState<'keep' | 'overwrite' | 'skip'>('keep');
+  const [zipFileName, setZipFileName] = useState(() => {
+    if (mode === 'compress') return `Archive_${new Date().getTime()}.zip`;
+    return '';
+  });
 
-  // Fetch folders thực tế
+  // Fetch folders
   useEffect(() => {
     const fetchFolders = async () => {
       if (!accessToken) return;
@@ -40,7 +53,9 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfi
         const response = await gapi.client.drive.files.list({
           q: `'${currentFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
           fields: 'files(id, name, mimeType)',
-          orderBy: 'name'
+          orderBy: 'name',
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true
         });
         setFolders(response.result.files || []);
       } catch (error) {
@@ -74,9 +89,9 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfi
           name: folderName,
           mimeType: 'application/vnd.google-apps.folder',
           parents: [currentFolderId]
-        }
+        },
+        supportsAllDrives: true
       });
-      // Refresh danh sách
       const newFolder = response.result;
       setFolders(prev => [...prev, newFolder].sort((a, b) => a.name.localeCompare(b.name)));
     } catch (error) {
@@ -84,16 +99,25 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfi
     }
   };
 
+  const isCompress = mode === 'compress';
+
   return (
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
       <div className="w-full max-w-4xl bg-white dark:bg-surface-dark rounded-xl shadow-2xl flex flex-col overflow-hidden border border-gray-200 dark:border-gray-700 h-[80vh]">
         
         <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex justify-between items-start">
           <div>
-            <h2 className="text-xl font-black tracking-tight">Extract to Google Drive</h2>
+            <h2 className="text-xl font-black tracking-tight">
+              {isCompress ? 'Create ZIP Archive' : 'Extract to Google Drive'}
+            </h2>
             <div className="flex items-center gap-2 mt-1">
-              <span className="material-symbols-outlined text-gray-400 !text-lg">folder_zip</span>
-              <p className="text-gray-500 text-sm">Source: <span className="font-bold text-slate-900 dark:text-gray-200">{archiveName}</span></p>
+              <span className="material-symbols-outlined text-gray-400 !text-lg">
+                {isCompress ? 'folder_zip' : 'unarchive'}
+              </span>
+              <p className="text-gray-500 text-sm">
+                {isCompress ? 'Selected Items: ' : 'Source: '}
+                <span className="font-bold text-slate-900 dark:text-gray-200">{archiveName}</span>
+              </p>
             </div>
           </div>
           <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -102,10 +126,10 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfi
         </div>
 
         <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-          {/* Cột chọn Folder */}
+          {/* Destination Selection */}
           <div className="flex-1 flex flex-col p-6 border-b md:border-b-0 md:border-r border-gray-100 dark:border-gray-800 overflow-hidden">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400">Select Destination</h3>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400">Select Destination Folder</h3>
               <button 
                 onClick={handleCreateFolder}
                 className="flex items-center gap-1 text-primary hover:text-blue-600 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-primary/10 transition-colors"
@@ -165,58 +189,78 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfi
             </div>
           </div>
 
-          {/* Cột Options */}
+          {/* Options Side Pane */}
           <div className="w-full md:w-[320px] bg-gray-50 dark:bg-gray-900/50 p-6 flex flex-col gap-6 overflow-y-auto custom-scrollbar">
-            <div>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-4">Extraction Options</h3>
-              <label className="flex items-start gap-3 p-3 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-primary/50 transition-colors shadow-sm">
-                <input 
-                  type="checkbox" 
-                  checked={createSubfolder} 
-                  onChange={(e) => setCreateSubfolder(e.target.checked)}
-                  className="mt-1 rounded text-primary focus:ring-primary/20" 
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold">Create subfolder</span>
-                  <span className="text-[10px] text-gray-500 font-bold leading-tight mt-1 uppercase tracking-wide">
-                    Put files inside "{archiveName.replace(/\.[^/.]+$/, "")}"
-                  </span>
+            {isCompress && (
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-2">Zip File Name</h3>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-gray-400 !text-sm">edit</span>
+                  <input 
+                    type="text"
+                    value={zipFileName}
+                    onChange={(e) => setZipFileName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-primary/20"
+                    placeholder="Archive.zip"
+                  />
                 </div>
-              </label>
-            </div>
-
-            <div className="h-px bg-gray-200 dark:bg-gray-800 w-full"></div>
-
-            <div>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-2">Conflict Resolution</h3>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-4">If a file already exists:</p>
-              <div className="flex flex-col gap-2">
-                {[
-                  { id: 'keep', label: 'Rename (Keep both)' },
-                  { id: 'overwrite', label: 'Overwrite existing' },
-                  { id: 'skip', label: 'Skip files' }
-                ].map((opt) => (
-                  <label 
-                    key={opt.id} 
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${conflictResolution === opt.id ? 'bg-white dark:bg-gray-800 border-primary shadow-sm' : 'border-gray-200 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-800'}`}
-                  >
-                    <input 
-                      type="radio" 
-                      name="conflict" 
-                      checked={conflictResolution === opt.id}
-                      onChange={() => setConflictResolution(opt.id as any)}
-                      className="text-primary focus:ring-primary/20" 
-                    />
-                    <span className="text-xs font-bold">{opt.label}</span>
-                  </label>
-                ))}
               </div>
-            </div>
+            )}
+
+            {!isCompress && (
+              <>
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-4">Extraction Options</h3>
+                  <label className="flex items-start gap-3 p-3 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-primary/50 transition-colors shadow-sm">
+                    <input 
+                      type="checkbox" 
+                      checked={createSubfolder} 
+                      onChange={(e) => setCreateSubfolder(e.target.checked)}
+                      className="mt-1 rounded text-primary focus:ring-primary/20" 
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-sm font-bold">Create subfolder</span>
+                      <span className="text-[10px] text-gray-500 font-bold leading-tight mt-1 uppercase tracking-wide">
+                        Put files inside folder "{archiveName.replace(/\.[^/.]+$/, "")}"
+                      </span>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="h-px bg-gray-200 dark:bg-gray-800 w-full"></div>
+
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-2">Conflict Resolution</h3>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-4">If a file already exists:</p>
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { id: 'keep', label: 'Rename (Keep both)' },
+                      { id: 'overwrite', label: 'Overwrite existing' },
+                      { id: 'skip', label: 'Skip files' }
+                    ].map((opt) => (
+                      <label 
+                        key={opt.id} 
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${conflictResolution === opt.id ? 'bg-white dark:bg-gray-800 border-primary shadow-sm' : 'border-gray-200 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-800'}`}
+                      >
+                        <input 
+                          type="radio" 
+                          name="conflict" 
+                          checked={conflictResolution === opt.id}
+                          onChange={() => setConflictResolution(opt.id as any)}
+                          className="text-primary focus:ring-primary/20" 
+                        />
+                        <span className="text-xs font-bold">{opt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="mt-auto bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg flex gap-3 items-start border border-blue-100 dark:border-blue-900/30">
               <span className="material-symbols-outlined text-primary !text-lg mt-0.5">info</span>
               <p className="text-[10px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider leading-relaxed">
-                Target: <strong>{pathHistory[pathHistory.length - 1].name}</strong>
+                Target Location: <strong>{pathHistory[pathHistory.length - 1].name}</strong>
               </p>
             </div>
           </div>
@@ -228,11 +272,15 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ onCancel, onConfi
             onClick={() => onConfirm({
               destinationFolderId: currentFolderId,
               createSubfolder,
-              conflictResolution
+              conflictResolution,
+              zipFileName
             })}
             className="px-6 py-2.5 rounded-lg text-sm font-bold bg-primary text-white hover:bg-blue-600 shadow-lg shadow-blue-500/30 flex items-center gap-2 transition-all active:scale-95"
           >
-            <span className="material-symbols-outlined !text-lg">unarchive</span> Extract Here
+            <span className="material-symbols-outlined !text-lg">
+              {isCompress ? 'archive' : 'unarchive'}
+            </span> 
+            {isCompress ? 'Create Zip' : 'Extract Here'}
           </button>
         </div>
       </div>

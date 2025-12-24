@@ -2,7 +2,7 @@
 // Declare gapi as a global constant to satisfy TypeScript compiler
 declare const gapi: any;
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import LandingPage from './components/LandingPage';
 import DrivePicker from './components/DrivePicker';
 import ArchivePreview from './components/ArchivePreview';
@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [selectedArchiveName, setSelectedArchiveName] = useState<string>('');
   const [selectedFilesForZip, setSelectedFilesForZip] = useState<string[]>([]);
+  const [zipConfig, setZipConfig] = useState<{folderId: string, fileName: string} | null>(null);
   const [extractionConfig, setExtractionConfig] = useState<ExtractionConfig | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(() => {
@@ -71,8 +72,16 @@ const App: React.FC = () => {
     setCurrentView(View.EXTRACTING);
   };
 
-  const handleZipFiles = (fileIds: string[]) => {
+  const handleZipRequest = (fileIds: string[]) => {
     setSelectedFilesForZip(fileIds);
+    setCurrentView(View.ZIP_DESTINATION);
+  };
+
+  const startCompression = (config: any) => {
+    setZipConfig({
+      folderId: config.destinationFolderId,
+      fileName: config.zipFileName || 'Archive.zip'
+    });
     setCurrentView(View.COMPRESSING);
   };
 
@@ -87,7 +96,7 @@ const App: React.FC = () => {
               setSelectedArchiveId(id);
               setCurrentView(View.PREVIEW);
             }}
-            onZipRequest={handleZipFiles}
+            onZipRequest={handleZipRequest}
             darkMode={darkMode}
             onToggleTheme={toggleDarkMode}
             accessToken={accessToken}
@@ -110,9 +119,20 @@ const App: React.FC = () => {
       case View.DESTINATION:
         return (
           <DestinationPicker 
+            mode="extract"
             archiveName={selectedArchiveName || 'Archive.zip'} 
             onCancel={() => setCurrentView(View.PREVIEW)} 
             onConfirm={startExtraction} 
+            accessToken={accessToken}
+          />
+        );
+      case View.ZIP_DESTINATION:
+        return (
+          <DestinationPicker 
+            mode="compress"
+            archiveName={`${selectedFilesForZip.length} items`} 
+            onCancel={() => setCurrentView(View.PICKER)} 
+            onConfirm={startCompression} 
             accessToken={accessToken}
           />
         );
@@ -130,9 +150,11 @@ const App: React.FC = () => {
         return (
           <CompressionProgress 
             fileIds={selectedFilesForZip}
+            destinationFolderId={zipConfig?.folderId || 'root'}
+            zipFileName={zipConfig?.fileName || 'Archive.zip'}
             accessToken={accessToken}
             onComplete={() => setCurrentView(View.PICKER)}
-            onCancel={() => setCurrentView(View.PICKER)}
+            onCancel={() => setCurrentView(View.ZIP_DESTINATION)}
           />
         );
       default:
