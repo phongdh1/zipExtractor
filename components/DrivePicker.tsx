@@ -31,6 +31,8 @@ const getFileInfo = (mimeType: string, fileName: string): { type: FileCategory; 
   if (lowerName.endsWith('.rar')) return { type: 'RAR', icon: 'inventory_2', color: 'text-purple-600' };
   if (lowerName.endsWith('.7z')) return { type: '7Z', icon: 'archive', color: 'text-indigo-500' };
   if (lowerName.endsWith('.tar')) return { type: 'TAR', icon: 'inventory_2', color: 'text-slate-500' };
+  if (lowerName.endsWith('.zar')) return { type: 'ZIP', icon: 'archive', color: 'text-indigo-500' };
+  if (lowerName.endsWith('.zz')) return { type: 'ZIP', icon: 'archive', color: 'text-indigo-500' };
   
   return { type: 'FILE', icon: 'draft', color: 'text-gray-400' };
 };

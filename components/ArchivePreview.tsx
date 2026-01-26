@@ -3,7 +3,7 @@
 declare const gapi: any;
 
 import React, { useState, useEffect, useMemo } from 'react';
-import * as fflate from 'fflate';
+import { extractArchive } from '../utils/archiveExtractor';
 import { ArchiveContent } from '../types';
 
 interface ArchivePreviewProps {
@@ -119,7 +119,9 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
         const uint8 = new Uint8Array(arrayBuffer);
 
         try {
-          const unzipped = fflate.unzipSync(uint8);
+          // Use the archive extractor utility which handles both ZIP and 7z formats
+          const unzipped = await extractArchive(uint8, fileName);
+          
           const root = buildTree(unzipped);
           
           if (isMounted) {
@@ -136,8 +138,9 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
             // Auto expand first level
             setExpandedPaths(new Set(root.children.filter(c => c.isFolder).map(c => c.id)));
           }
-        } catch (unzipErr) {
-          throw new Error('This archive format (possibly RAR/7Z) is not yet supported. Please use ZIP format.');
+        } catch (unzipErr: any) {
+          console.error('Extraction error:', unzipErr);
+          throw new Error(`Failed to extract archive: ${unzipErr?.message || 'Unsupported archive format or corrupted file.'}`);
         }
       } catch (err: any) {
         console.error('Extraction Error:', err);
@@ -289,7 +292,7 @@ const ArchivePreview: React.FC<ArchivePreviewProps> = ({ archiveId, onExtract, o
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6">
                 <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-slate-900 dark:text-white font-black text-lg">Reading ZIP data...</p>
+                <p className="text-slate-900 dark:text-white font-black text-lg">Reading archive data...</p>
               </div>
             ) : error ? (
               <div className="flex flex-col items-center justify-center py-32 gap-6 text-center">

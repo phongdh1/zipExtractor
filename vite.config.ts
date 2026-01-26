@@ -8,6 +8,9 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        fs: {
+          allow: ['..']
+        }
       },
       plugins: [react()],
       define: {
@@ -18,6 +21,9 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      optimizeDeps: {
+        exclude: ['7z-wasm']
       }
     };
 });

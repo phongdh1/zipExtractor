@@ -6,7 +6,7 @@
 declare const gapi: any;
 
 import React, { useEffect, useState } from "react";
-import * as fflate from 'fflate';
+import { extractArchive } from '../utils/archiveExtractor';
 import { ExtractionConfig } from "./DestinationPicker";
 
 interface ExtractionProgressProps {
@@ -200,7 +200,17 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
         if (isMounted) setStatus("Extracting data...");
         const uint8 = new Uint8Array(arrayBuffer);
 
-        const unzipped: UnzippedMap = fflate.unzipSync(uint8);
+        // Get archive filename for format detection
+        const meta = await gapi.client.drive.files.get({
+          fileId: archiveId,
+          fields: "name",
+          supportsAllDrives,
+        });
+        const archiveFileName = meta.result.name || '';
+        
+        // Use the archive extractor utility which handles both ZIP and 7z formats
+        const unzipped: UnzippedMap = await extractArchive(uint8, archiveFileName);
+        
         const allPaths = Object.keys(unzipped)
           .filter((p) => !!p)
           .filter((p) => !isUnsafePath(p));
